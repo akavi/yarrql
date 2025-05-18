@@ -1,0 +1,6 @@
+$teachers.map(t => {
+  enrollments: $classes.filter(c => c.teacher_id = t.id)
+     .flatMap(c => $enrollments.filter(e => e.class_id = c.id)
+}).map{
+    highestGrade: t.enrollments.orderBy{ $.grade }.first.grade
+}

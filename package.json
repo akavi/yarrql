@@ -1,0 +1,12 @@
+{
+  "name": "quorylang",
+  "version": "1.0.0",
+  "description": "lol",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "@types/lodash": "^4.17.16",
+    "lodash": "^4.17.21"
+  }
+}
