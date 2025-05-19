@@ -1,5 +1,4 @@
-![image](https://github.com/user-attachments/assets/35982f58-7769-4630-9e20-b4d2bde57ded | width=200)
-
+<img src="https://github.com/user-attachments/assets/35982f58-7769-4630-9e20-b4d2bde57ded" width="100" />
 # YARRQL: Yet Another Recursive Relational Query Language
 
 Let's face it, SQL sucks. It's the only vestige (for most of us) of the COBOL era of languages, and it shows its age.
