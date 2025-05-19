@@ -107,6 +107,94 @@ YARRQL is _not_ an ORM like ActiveRecord or DjangoORM or Sequelize. It's a query
 
 YARRQL is also _not_ a DSL for constructing SQL queries in javascript like Knex, Drizzle, or Kysely. It's a different _query paradigm_ like JS is to Java (that's to say, not revolutionary, but still better :wink: )
 
+## Don't LLMs make this pointless? Can't we just ask them to generate SQL?
+
+LLMs can generate SQL, but it's hard to verify if that SQL is _correct_. I claim that it's much easier to see if a given YARRQL query does actually have the behavior you want.
+
+LLMs can _also_ generate YARRQL, with the following prompt:
+
+<details>
+**YARRQL is a TypeScript-embedded query language for relational algebra, supporting nested (table-valued) columns and composable transformations. YARRQL queries are written using `.map`, `.filter`, `.any`, `.every`, and aggregate methods on table objects representing schema. Scalar columns map to values or expressions; table-valued columns map to subqueries (including nested `.filter`/`.map`). Filters use boolean-returning expressions (e.g., `s.age.gt(20)`), and aggregates like `.count()`, `.avg()` are called on subqueries. Logical connectives: `.and()`, `.or()`, `.not()`. Output is always a projection (`.map`), not direct selection of columns. Example:**
+
+```typescript
+const Teachers = Table({id: 'uuid', name: 'string'})
+const Students = Table({id: 'uuid', name: 'string', age: 'number'})
+const Enrollments = Table({student_id: 'uuid', class_id: 'uuid', grade: 'number'})
+const Classes = Table({id: 'uuid', name: 'string', teacher_id: 'uuid'})
+
+// Query for teachers with their students
+const teachersWithStudents = Teachers.map(t => ({
+  ...t,
+  students: Students.filter(s =>
+    Enrollments.any(e =>
+      Classes.any(c =>
+        c.teacher_id.eq(t.id).and(c.id.eq(e.class_id)).and(e.student_id.eq(s.id))
+      )
+    )
+  )
+}))
+
+// Query for students with pending classes
+const studentsWithPendingClasses = Students.map(s => ({
+  id: s.id,
+  pendingClasses: Classes.filter(c =>
+    Enrollments.any(e =>
+      e.student_id.eq(s.id).and(e.class_id.eq(c.id)).and(e.grade.eq(undefined))
+    )
+  )
+})).filter(s => s.pendingClasses.count().gt(0))
+```
+API:
+```typescript
+class QueryBuilder<T extends Schema> {
+  constructor(public node: Query<T>) {}
+  toAST(): Query<T>
+
+  filter(fn: (cols: ColumnAccessors<T>) => Expr): QueryBuilder<T>
+  map<F extends Schema>(
+    fn: (cols: ColumnAccessors<T>) => ColumnAccessors<F>
+  ): QueryBuilder<F>
+  orderBy(fn: (cols: ColumnAccessors<T>) => OrderSpec[]): QueryBuilder<T>
+  groupBy(
+    fn: (cols: ColumnAccessors<T>) => Expr
+  ): QueryBuilder<{ key: ScalarType; values: T }>
+
+  limit(n: number): QueryBuilder<T>
+  offset(n: number): QueryBuilder<T>
+
+  union(other: QueryBuilder<T>): QueryBuilder<T>
+  intersect(other: QueryBuilder<T>): QueryBuilder<T>
+  difference(other: QueryBuilder<T>): QueryBuilder<T>
+
+  count(): ExprBuilder
+  average(): ExprBuilder
+  max(): ExprBuilder
+  min(): ExprBuilder
+  any(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder
+  every(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder
+}
+
+class ExprBuilder {
+  constructor(public node: Expr) {}
+
+  eq(value: Expr | Scalar): ExprBuilder
+  gt(value: Expr | number): ExprBuilder
+  lt(value: Expr | number): ExprBuilder
+  minus(value: Expr | number): ExprBuilder
+  plus(value: Expr | number): ExprBuilder
+  and(expr: Expr): ExprBuilder
+  or(expr: Expr): ExprBuilder
+  not(): ExprBuilder
+  asc(): OrderSpecBuilder
+  desc(): OrderSpecBuilder
+}
+```
+
+**Generate queries in this style. Table-valued columns use nested subqueries via `.filter`/`.map`. Scalar columns are projected as values or aggregate expressions. Output is a `.map` projection (not SQL).**
+
+</details>
+
+
 ## ToDo
 
 As the long list here suggests, this is pre-pre-pre-pre-alpha. Not fit for actual production use anywhere
