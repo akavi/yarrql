@@ -459,6 +459,10 @@ class QueryBuilder<T extends Schema> {
   }
 }
 
+export function Table<S extends Schema>(name: string, schema: S): QueryBuilder<S> {
+  return new QueryBuilder({type: "table", name, schema})
+}
+
 function unreachable(v: never): never {
   throw new Error(`Expected ${v} to be unreachale`)
 }
