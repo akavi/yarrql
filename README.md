@@ -73,7 +73,7 @@ Imagine we have the following tables:
      .map(c => ({
        averageStudentAge: Students.filter(s => 
          Enrollments.some(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))
-       ).averageOf(s => {age: s.age})
+       ).averageOf(s => s.age)
      }))
      .filter(c => c.averageStudentAge.gt(20))
  }));
@@ -93,11 +93,12 @@ Imagine we have the following tables:
  ```
  
  ```
- const classesWithWideGradeRange = Classes.project(c => ({
-   id: c.id
-   highestGrade: grades(c).max()
-   lowestGrade: grades(c).min()
- })).where(c => c.highestGrade.minus(c.lowestGrade).gte(20));
+ const classesWithWideGradeRange = Classes.map(c => ({
+  ...c,
+   grades:  Enrollments
+     .filter(e => e.class_id.eq(c.id).and(e.grade.neq(undefined)))
+     .map(e => ({grade: e.grade}))
+ })).filter(c => c.grades.max().minus(c.grades.min()).gte(20));
  ```
 
 ## What this is not
@@ -112,7 +113,9 @@ As the long list here suggests, this is pre-pre-pre-pre-alpha. Not fit for actua
 
 1. Add support for "simple" arrays (eg, if a table is typed `Array<{...fields}>`, constructs like `Array<Scalar>`
 2. Add support for nested objects (eg, if a table is typed `Array{...fields}>`, constructs like `{..fields}` and `{field: {...subFields}}`
-3. Allow querying on tables without specifying their schema (at the cost of type safety)
-4. A Chrome plugin to generate SQL from YARRQL on the fly
-5. Support for more than just Postgres dialect SQL
-6. (one day?) A native language format, rather than hosted in TS/JS
+3. "pluck"-ing values (`.first`, `.nth`, `.last`)
+3. SQL-ese aliases (`where` => `filter`, `map` => `select`)
+4. Allow querying on tables without specifying their schema (at the cost of type safety)
+5. A Chrome plugin to generate SQL from YARRQL on the fly
+6. Support for more than just Postgres dialect SQL
+7. (one day?) A native language format, rather than hosted in TS/JS
