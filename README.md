@@ -1,4 +1,4 @@
-![image](https://github.com/user-attachments/assets/35982f58-7769-4630-9e20-b4d2bde57ded)
+![image](https://github.com/user-attachments/assets/35982f58-7769-4630-9e20-b4d2bde57ded | width=200)
 
 # YARRQL: Yet Another Recursive Relational Query Language
 
