@@ -92,7 +92,7 @@ type BinaryOperator = ComparisonOperator | MathOperator
 type LogicalOperator = 'and' | 'or';
 type AggregateOperator = "count" | "average" | "max" | "min"
 
-type Expr =
+export type Expr =
   | { type: 'expr_column'; source: Query<Schema>; column: string }
   | { type: 'value'; value: Scalar }
   | { type: 'eq'; left: Expr; right: Expr }
@@ -102,7 +102,7 @@ type Expr =
   | { type: 'agg'; op: AggregateOperator; source: Query<Schema> }
 
 // ===== Query Nodes =====
-type Query<S extends Schema> =
+export type Query<S extends Schema> =
   | { type: 'query_column'; source: Query<Schema>; column: string }
   | { type: 'table'; name: string; schema: S }
   | { type: 'filter'; source: Query<S>; filter: Expr }
@@ -118,7 +118,7 @@ type OrderSpec = { expr: Expr; direction: 'asc' | 'desc' };
 // ===== Schema Types =====
 type ScalarType = 'uuid' | 'string' | 'number' | 'boolean' | 'unknown'
 
-type Schema = {[columnName: string]: Schema | ScalarType};
+export type Schema = {[columnName: string]: Schema | ScalarType};
 type Projection<S extends Schema> = {[K in keyof S]: S[K] extends Schema ? Query<S[K]> : Expr}
 type ColumnAccessors<S extends Schema> = {
   [K in keyof S]: S[K] extends Schema 
@@ -463,6 +463,6 @@ export function Table<S extends Schema>(name: string, schema: S): QueryBuilder<S
   return new QueryBuilder({type: "table", name, schema})
 }
 
-function unreachable(v: never): never {
+export function unreachable(v: never): never {
   throw new Error(`Expected ${v} to be unreachale`)
 }
