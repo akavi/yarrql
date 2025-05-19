@@ -2,7 +2,7 @@
 
 # YARRQL: Yet Another Recursive Relational Query Language
 
-Let's face it, SQL sucks. It's the only vestige (for most of us) of the COBOL era of languages, and it shows its age.
+Let's face it, SQL sucks. It's the only vestige (for most of us) of the COBOL era of languages, and despite its persistence, it's every bit as unwieldy as its contemporaries.
 Nested arrays had _just been invented_ when SQL first came out, and it shows.
 In place of the suspiciously new-fangled nested composite data (eg, columns where the _value_ of the column is itself a table), we get the morass that is `join`s and `group by` and `having`.
 
