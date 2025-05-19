@@ -47,7 +47,7 @@
  * MORE EXAMPLE QUERIES:
  *
  * const teachersWithMatureClasses = Teachers.map(t => ({
- *   id: t.id
+ *   ...t,
  *   matureClasses: Classes.filter(c => c.teacher_id.eq(t.id))
  *     .map(c => ({
  *       averageStudentAge: Students.filter(s => 
@@ -58,6 +58,7 @@
  * }));
  * 
  * const studentsWithPendingGrades = Students.map(s => ({
+ *   ...s,
  *   id: s.id,
  *   pendingClasses: Classes.filter(c => 
  *     Enrollments.any(e => 
@@ -68,14 +69,14 @@
  *   )
  * })).filter(s => s.pendingClasses.count().gt(0))
  * 
- * function grades(c: ColumnAccessors<{id: ScalarType}>): QueryBuiler<{grade: ScalarType}>
- *   return Enrollments.where(e => e.class_id.eq(c.id).and(e.grade.neq(undefined))).map(e => {grade: e.grade})
- * }
- * const classesWithWideGradeRange = Classes.project(c => ({
- *   id: c.id
- *   highestGrade: grades(c).max()
- *   lowestGrade: grades(c).min()
- * })).where(c => c.highestGrade.minus(c.lowestGrade).gte(20));
+ * const classesWithWideGradeRange = Classes.map(c => ({
+ *   ....c, 
+ *   grades: Enrollments.where(e => e.class_id.eq(c.id).and(e.grade.neq(undefined))).map(e => {grade: e.grade})
+ * })).map(c => ({
+ *   ...c,
+ *   maxGrade: grades.max()
+ *   minGrade: grades.min()
+ * }).filter(c => c.maxGrade.minus(c.minGrade).gt(20))
  * 
  */
 
@@ -313,6 +314,18 @@ function average(source: Query<Schema>): Expr {
 }
 
 // compound helpers
+function averageOf<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr) {
+  return average(map(source, (cols) => ({val: fn(cols)})))
+}
+
+function maxOf<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr) {
+  return min(map(source, (cols) => ({val: fn(cols)})))
+}
+
+function minOf<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr) {
+  return max(map(source, (cols) => ({val: fn(cols)})))
+}
+
 function any<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr): Expr {
   return gt(count(filter(source, fn)), 0)
 }
@@ -433,6 +446,16 @@ class QueryBuilder<T extends Schema> {
 
   every(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
     return new ExprBuilder(every<T>(this.node, fn))
+  }
+
+  averageOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
+    return new ExprBuilder(averageOf(this.node, fn))
+  }
+  maxOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
+    return new ExprBuilder(maxOf(this.node, fn))
+  }
+  minOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
+    return new ExprBuilder(minOf(this.node, fn))
   }
 }
 
