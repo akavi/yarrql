@@ -143,7 +143,9 @@ type Schema<T> = T extends null
   : never;
 
 export type ExprBuilder<T extends Type> =  {__brand?: T} & (
-  T extends boolean ?
+  T extends null ?
+     NullBuilder
+  : T extends boolean ?
      BooleanBuilder
   : T extends number ?
     NumberBuilder
@@ -158,10 +160,8 @@ export type ExprBuilder<T extends Type> =  {__brand?: T} & (
   : never
 )
 
-
 class ArrayBuilder<T extends Type> {
   constructor(public node: Expr<Array<T>>) {}
-
 
   map<R extends Type>(fn: (val: ExprBuilder<T>) => ExprBuilder<R>): ArrayBuilder<R> {
     const map = withRowBuilder(this.node, fn)
@@ -182,8 +182,6 @@ class ArrayBuilder<T extends Type> {
     const sort = withRowBuilder(this.node, fn)
     return new ArrayBuilder({ type: "sort", source: this.node, sort })
   }
-
-
 }
 
 function withRowBuilder<A extends Type, B extends Type>(source: Expr<Array<A>>, fn: (builder: ExprBuilder<A>) => ExprBuilder<B>): Expr<B> {
@@ -192,20 +190,69 @@ function withRowBuilder<A extends Type, B extends Type>(source: Expr<Array<A>>, 
   return row as any;
 }
 
+function toExpr<T extends Type>(val: T | Expr<T>) {
+  // TODO
+  return val as any
+}
 
 class NumberBuilder {
   constructor(public node: Expr<number>) {}
+
+  eq(value: Expr<Type> | Type): BooleanBuilder {
+    return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
+  }
+
+  gt(value: Expr<number> | number): BooleanBuilder {
+    return new BooleanBuilder({type: "comparison_op", op: "gt", left: this.node, right: toExpr(value)})
+  }
+
+  lt(value: Expr<number> | number): BooleanBuilder {
+    return new BooleanBuilder({type: "comparison_op", op: "lt", left: this.node, right: toExpr(value)})
+  }
+
+  minus(value: Expr<number> | number): NumberBuilder {
+    return new NumberBuilder({type: "math_op", op: "plus", left: this.node, right: toExpr(value)})
+  }
+
+  plus(value: Expr<number> | number): NumberBuilder {
+    return new NumberBuilder({type: "math_op", op: "minus", left: this.node, right: toExpr(value)})
+  }
 }
 
 class StringBuilder {
   constructor(public node: Expr<string>) {}
 
-  eq(val: string | StringBuilder): BooleanBuilder {
+  eq(value: Expr<string> | string): BooleanBuilder {
+    return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
   }
 }
 
 class BooleanBuilder {
   constructor(public node: Expr<boolean>) {}
+
+  eq(value: Expr<Type> | Type): BooleanBuilder {
+    return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
+  }
+
+  and(value: Expr<boolean> | boolean): BooleanBuilder {
+    return new BooleanBuilder({type: "logical_op", op: "and", left: this.node, right: toExpr(value)})
+  }
+
+  or(value: Expr<boolean> | boolean): BooleanBuilder {
+    return new BooleanBuilder({type: "logical_op", op: "or", left: this.node, right: toExpr(value)})
+  }
+
+  not(): BooleanBuilder {
+    return new BooleanBuilder({type: "not", expr: this.node})
+  }
+}
+
+class NullBuilder {
+  constructor(public node: Expr<boolean>) {}
+
+  eq(value: Expr<Type> | Type): BooleanBuilder {
+    return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
+  }
 }
 
 type InferSchema<S extends Schema<any>> = S extends {type: "null"}
@@ -224,7 +271,6 @@ type InferSchema<S extends Schema<any>> = S extends {type: "null"}
       : never
   : never
 
-
-function Table<S extends Schema<any>>(name: string, schema: S): ArrayBuilder<InferSchema<S>> {
+export function Table<S extends Schema<any>>(name: string, schema: S): ArrayBuilder<InferSchema<S>> {
   return new ArrayBuilder({type: "table", name, schema})
 }
