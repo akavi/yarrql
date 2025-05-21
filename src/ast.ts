@@ -142,20 +142,7 @@ type Schema<T> = T extends null
   ? {type: "record", schema: { [K in keyof T]: Schema<T[K]>}}
   : never;
 
-export type ExprBuilder<T extends Type> = 
-  T extends boolean ?
-     BooleanBuilder
-  : T extends number ?
-    NumberBuilder
-  : T extends string ?
-    StringBuilder
-  : T extends Array<infer ElemT> ?
-     ElemT extends Type 
-       ? ArrayBuilder<ElemT>
-       : never
-  : never
-
-export type RowBuilder<T extends Type> = 
+export type ExprBuilder<T extends Type> =  {__brand?: T} & (
   T extends boolean ?
      BooleanBuilder
   : T extends number ?
@@ -167,31 +154,58 @@ export type RowBuilder<T extends Type> =
        ? ArrayBuilder<ElemT>
        : never
   : T extends Record<string, Type> ?
-    { [Key in keyof T]: RowBuilder<T[Key]> }
+    { [Key in keyof T]: ExprBuilder<T[Key]> }
   : never
+)
 
 
 class ArrayBuilder<T extends Type> {
   constructor(public node: Expr<Array<T>>) {}
 
-  map<R extends Type>(fn: (val: RowBuilder<T>) => ExprBuilder<R>): ArrayBuilder<R> {
-    const mapp = withRowBuilder(this.node, fn)
-    return new ArrayBuilder({ type: "map", source: this.node, mapp })
+
+  map<R extends Type>(fn: (val: ExprBuilder<T>) => ExprBuilder<R>): ArrayBuilder<R> {
+    const map = withRowBuilder(this.node, fn)
+    return new ArrayBuilder({ type: "map", source: this.node, map })
   }
 
-  filter(fn: (val: RowBuilder<T>) => ExprBuilder<boolean>): ArrayBuilder<T> {
+  filter(fn: (val: ExprBuilder<T>) => ExprBuilder<boolean>): ArrayBuilder<T> {
     const filter = withRowBuilder(this.node, fn)
     return new ArrayBuilder({ type: "filter", source: this.node, filter })
   }
 
-  first(): ExprBuilder<T> {
+  sort(fn: (val: ExprBuilder<T>) => ExprBuilder<Type>): ArrayBuilder<T> {
+    const sort = withRowBuilder(this.node, fn)
+    return new ArrayBuilder({ type: "sort", source: this.node, sort })
   }
+
+  limit(fn: (val: ExprBuilder<T>) => ExprBuilder<Type>): ArrayBuilder<T> {
+    const sort = withRowBuilder(this.node, fn)
+    return new ArrayBuilder({ type: "sort", source: this.node, sort })
+  }
+
+
 }
 
-function withRowBuilder<A extends Type, B extends Type>(source: Expr<Array<A>>, fn: (builder: RowBuilder<A>) => ExprBuilder<B>): Expr<B> {
+function withRowBuilder<A extends Type, B extends Type>(source: Expr<Array<A>>, fn: (builder: ExprBuilder<A>) => ExprBuilder<B>): Expr<B> {
   const row: Expr<A> = { type: "row", source }
   // TODO
   return row as any;
+}
+
+
+class NumberBuilder {
+  constructor(public node: Expr<number>) {}
+}
+
+class StringBuilder {
+  constructor(public node: Expr<string>) {}
+
+  eq(val: string | StringBuilder): BooleanBuilder {
+  }
+}
+
+class BooleanBuilder {
+  constructor(public node: Expr<boolean>) {}
 }
 
 type InferSchema<S extends Schema<any>> = S extends {type: "null"}
@@ -214,23 +228,3 @@ type InferSchema<S extends Schema<any>> = S extends {type: "null"}
 function Table<S extends Schema<any>>(name: string, schema: S): ArrayBuilder<InferSchema<S>> {
   return new ArrayBuilder({type: "table", name, schema})
 }
-const nullTable = Table("table", {type: "string"})
-nullTable satisfies ArrayBuilder<string>
-const filtered = nullTable.filter(nul => nul.eq(3))
-
-class NumberBuilder {
-  constructor(public node: Expr<number>) {}
-}
-
-class StringBuilder {
-  constructor(public node: Expr<string>) {}
-
-  eq(val: any): BooleanBuilder {
-  }
-}
-
-class BooleanBuilder {
-  constructor(public node: Expr<boolean>) {}
-}
-
-
