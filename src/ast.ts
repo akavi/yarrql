@@ -80,6 +80,8 @@
  * 
  */
 
+import { isNumber, isString, isBoolean, fromPairs } from "lodash"
+
 // ===== Embedded Types =====
 type NumberType = {type: "number" }
 type StringType = {type: "string" }
@@ -160,15 +162,15 @@ type LiteralOf<T extends Type> = T extends { type: "null" }
   : never
 
 export type ExprBuilder<T extends Type> =  {__brand?: T} & (
-  T extends null ?
+  T extends NullType ?
      NullBuilder
-  : T extends boolean ?
+  : T extends BoolType ?
      BooleanBuilder
-  : T extends number ?
+  : T extends NumberType ?
     NumberBuilder
-  : T extends string ?
+  : T extends StringType ?
     StringBuilder
-  : T extends Array<infer ElemT> ?
+  : T extends ArrayTypeOf<infer ElemT> ?
      ElemT extends Type 
        ? ArrayBuilder<ElemT>
        : never
@@ -270,27 +272,31 @@ class ArrayBuilder<T extends Type> {
   }
 
   // helpers
-  any(fn: (val: ExprBuilder<T>) => ExprBuilder<BoolType>): BooleanExpr {
-    return new BooleanBuilder({type: "
+  any(fn: (val: ExprBuilder<T>) => ExprBuilder<BoolType>): BooleanBuilder {
+    return this.filter(fn).count().gt(0)
   }
 
-  every(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
-    return new ExprBuilder(every<T>(this.node, fn))
-  }
-
-  averageOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
-    return new ExprBuilder(averageOf(this.node, fn))
-  }
-  maxOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
-    return new ExprBuilder(maxOf(this.node, fn))
-  }
-  minOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
-    return new ExprBuilder(minOf(this.node, fn))
+  every(fn: (val: ExprBuilder<T>) => ExprBuilder<BoolType>): BooleanBuilder {
+    return this.filter((val) => fn(val).not()).count().eq(0)
   }
 }
 
-function getArrayType(val: Array<unknown>): Type {
-  // TODO
+function getLiteralType(val: unknown): Type {
+  if (val === null) {
+    return {type: "null" }
+  } else if (isNumber(val)) {
+    return {type: "number"}
+  } else if (isString(val)) {
+    return {type: "string" }
+  } else if (isBoolean(val)) {
+    return {type: "bool" }
+  } else if (val instanceof Array) {
+    return {type: "array", el: getLiteralType(val[0]) }
+  } else if (val instanceof Object) {
+    return fromPairs(Object.entries(val).map(([k, v]) => [k, getLiteralType(v)])) as any
+  } else {
+    throw new Error("Wat")
+  }
 }
 
 function getType<T extends Type>(expr: Expr<T>): T {
@@ -326,7 +332,7 @@ function getType<T extends Type>(expr: Expr<T>): T {
     return { type: "boolean" } as any;
   } else if (expr.type === "array") {
     // TODO: support unknown arrays;
-    return getArrayType(expr.array) as any;
+    return getLiteralType(expr.array) as any;
   } else if (expr.type === "table") {
     return expr.schema as any;
   } else if (expr.type === "filter") {
@@ -371,7 +377,7 @@ function toExpr<T extends Type>(val: LiteralOf<T> | Expr<T>): Expr<T> {
 class NumberBuilder {
   constructor(public node: Expr<NumberType>) {}
 
-  eq(value: Expr<Type> | Type): BooleanBuilder {
+  eq(value: Expr<NumberType> | number): BooleanBuilder {
     return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
   }
 
