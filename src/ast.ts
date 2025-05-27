@@ -80,67 +80,84 @@
  * 
  */
 
-import { mapValues } from "lodash"
-
 // ===== Embedded Types =====
-type ScalarType = boolean | number | string | null
-type Type = ScalarType | {[col: string]: Type} | Array<Type>
+type NumberType = {type: "number" }
+type StringType = {type: "string" }
+type NullType = {type: "null"}
+type BoolType = {type: "bool"}
+type ScalarType = NumberType | StringType | NullType | BoolType
+type ArrayType = {type: "array", el: Type}
+type RecordType = {type: "record", fields: {[col: string]: Type}}
+type Type = ScalarType | ArrayType | RecordType
+
+type ArrayTypeOf<T extends Readonly<Type>> = { type: "array", el: T}
+type RecordTypeOf<T extends Record<string, Type>> = { type: "record", fields: {[K in keyof T]: T[K]}}
 
 // ===== Expression Types =====
 type AnyExpr<T extends Type> = 
-  | { type: 'literal'; literal: T }
-  | { type: 'field'; source: Expr<{[col: string]: T}>; field: string }
-  | { type: 'first'; source: Expr<Array<T>> }
-  | { type: 'row'; source: Expr<Array<T>> }
+  | { type: 'field'; source: Expr<RecordTypeOf<Record<string, T>>>; field: string }
+  | { type: 'first'; source: Expr<ArrayTypeOf<Type>> }
+  | { type: 'row'; source: Expr<ArrayTypeOf<Type>> }
 
 type ScalarWindowOperator = "max" | "min"
-type ScalarExpr<T extends Type> = 
-  | { type: 'scalar_window'; op: ScalarWindowOperator; source: Expr<Array<T>> }
+type ScalarExpr<T extends Type> = never
+ | { type: 'scalar_window'; op: ScalarWindowOperator; source: Expr<ArrayTypeOf<T>> }
 
 type MathOperator = 'plus' | 'minus'
-type NumberWindowOperator = "max" | "min"
+type NumberWindowOperator = "max" | "min" | "average"
 type NumberExpr = 
-  | { type: "math_op", op: MathOperator, left: Expr<number>, right: Expr<number> }
-  | { type: 'number_window'; op: NumberWindowOperator; source: Expr<Array<number>> }
+  | { type: 'number'; number: number }
+  | { type: "math_op", op: MathOperator, left: Expr<NumberType>, right: Expr<NumberType> }
+ | { type: 'number_window'; op: NumberWindowOperator; source: Expr<ArrayTypeOf<NumberType>> }
+  | { type: 'count'; source: Expr<ArrayType> }
 
 type LogicalOperator = 'and' | 'or';
 type ComparisonOperator = 'gt' | 'lt' | 'gte' | 'lte';
-type BooleanExpr = 
-  | { type: 'not'; expr: Expr<boolean> }
-  | { type: "eq", left: Expr<Type>, right: Expr<Type> }
-  | { type: 'comparison_op'; op: ComparisonOperator; left: Expr<number>; right: Expr<number> }
-  | { type: 'logical_op'; op: LogicalOperator; left: Expr<boolean>, right: Expr<boolean> }
+type BooleanExpr =
+ | { type: 'boolean'; boolean: boolean }
+ | { type: 'not'; expr: Expr<BoolType> }
+ | { type: "eq", left: Expr<Type>, right: Expr<Type> }
+ | { type: 'comparison_op'; op: ComparisonOperator; left: Expr<NumberType>; right: Expr<NumberType> }
+ | { type: 'logical_op'; op: LogicalOperator; left: Expr<BoolType>, right: Expr<BoolType> }
 
-type ArrayExpr<T extends Type> = 
-  | { type: 'table'; name: string; schema: Schema<T> }
-  | { type: 'filter'; source: Expr<Array<T>>; filter: Expr<boolean> }
-  | { type: 'sort'; source: Expr<Array<T>>; sort: Expr<Type> }
-  | { type: 'limit'; source: Expr<Array<T>>; limit: number }
-  | { type: 'offset'; source: Expr<Array<T>>; offset: number }
-  | { type: 'set_op'; op: 'union' | 'intersect' | 'difference'; left: Expr<Array<T>>; right: Expr<Array<T>> }
-  | { type: 'map'; source: Expr<Array<Type>>, map: Expr<T> }
-  | { type: 'flat_map'; source: Expr<Array<Type>>, flatMap: Expr<Array<T>> }
-  | { type: 'group_by'; source: Expr<Array<Type>>; key: Expr<Type> };
+type StringExpr =  { type: "string", string: string }
+type NullExpr = { type: "null" }
 
-export type Expr<T extends Type> = { __elemType?: T } & (
+type ArrayExpr<T extends Type> =  never
+  | { type: 'array'; array: Array<any> }
+  | { type: 'table'; name: string; schema: T }
+  | { type: 'filter'; source: Expr<ArrayTypeOf<T>>; filter: Expr<BoolType> }
+  | { type: 'sort'; source: Expr<ArrayTypeOf<T>>; sort: Expr<Type> }
+  | { type: 'limit'; source: Expr<ArrayTypeOf<T>>; limit: number }
+  | { type: 'offset'; source: Expr<ArrayTypeOf<T>>; offset: number }
+  | { type: 'set_op'; op: 'union' | 'intersect' | 'difference'; left: Expr<ArrayTypeOf<T>>; right: Expr<ArrayTypeOf<T>> }
+  | { type: 'map'; source: Expr<ArrayTypeOf<Type>>, map: Expr<T> }
+  | { type: 'flat_map'; source: Expr<ArrayTypeOf<Type>>, flatMap: Expr<ArrayTypeOf<T>> }
+  | { type: 'group_by'; source: Expr<ArrayTypeOf<Type>>; key: Expr<Type> };
+
+export type Expr<T extends Type> = { __brand?: T } & (
   | (T extends Type ? AnyExpr<T>: never)
   | (T extends ScalarType ? ScalarExpr<T> : never)
-  | (T extends boolean ? BooleanExpr : never)
-  | (T extends number ? NumberExpr : never)
-  | (T extends Array<infer ElemT> ? ElemT extends Type ? ArrayExpr<ElemT> : never : never)
+  | (T extends BoolType ? BooleanExpr : never)
+  | (T extends NumberType ? NumberExpr : never)
+  | (T extends StringType ? StringExpr : never)
+  | (T extends NullType ? NullExpr : never)
+  | (T extends ArrayTypeOf<infer ElemT> ? ElemT extends Type ? ArrayExpr<ElemT> : never : never)
 )
 
-type Schema<T> = T extends null 
-  ? {type: "null"}
-  : T extends string
-  ? {type: "string"}
-  : T extends number
-  ? {type: "number"}
-  : T extends Array<infer ElemT>
-  ? {type: "array", el: Schema<ElemT>}
-  : T extends Record<string, unknown>
-  ? {type: "record", schema: { [K in keyof T]: Schema<T[K]>}}
-  : never;
+type LiteralOf<T extends Type> = T extends { type: "null" }
+   ? null
+ : T extends { type: "string" }
+   ? string
+ : T extends { type: "bool" }
+   ? boolean
+ : T extends { type: "number" }
+   ? number
+ : T extends { type: "array", el: Type}
+    ? Array<LiteralOf<T["el"]>>
+  : T extends { type: "record", fields: {[col: string]: Type}}
+    ? {[K in keyof T["fields"]]: LiteralOf<T["fields"][K]>}
+  : never
 
 export type ExprBuilder<T extends Type> =  {__brand?: T} & (
   T extends null ?
@@ -161,14 +178,9 @@ export type ExprBuilder<T extends Type> =  {__brand?: T} & (
 )
 
 class ArrayBuilder<T extends Type> {
-  constructor(public node: Expr<Array<T>>) {}
+  constructor(public node: Expr<ArrayTypeOf<T>>) {}
 
-  map<R extends Type>(fn: (val: ExprBuilder<T>) => ExprBuilder<R>): ArrayBuilder<R> {
-    const map = withRowBuilder(this.node, fn)
-    return new ArrayBuilder({ type: "map", source: this.node, map })
-  }
-
-  filter(fn: (val: ExprBuilder<T>) => ExprBuilder<boolean>): ArrayBuilder<T> {
+  filter(fn: (val: ExprBuilder<T>) => ExprBuilder<BoolType>): ArrayBuilder<T> {
     const filter = withRowBuilder(this.node, fn)
     return new ArrayBuilder({ type: "filter", source: this.node, filter })
   }
@@ -177,69 +189,236 @@ class ArrayBuilder<T extends Type> {
     const sort = withRowBuilder(this.node, fn)
     return new ArrayBuilder({ type: "sort", source: this.node, sort })
   }
+  
+  groupBy<K extends Type>(fn: (val: ExprBuilder<T>) => ExprBuilder<K>): ArrayBuilder<RecordTypeOf<{key: K, values: ArrayTypeOf<T>}>> {
+    const key = withRowBuilder(this.node, fn)
+    return new ArrayBuilder({ type: "group_by", source: this.node, key })
+  }
 
-  limit(fn: (val: ExprBuilder<T>) => ExprBuilder<Type>): ArrayBuilder<T> {
-    const sort = withRowBuilder(this.node, fn)
-    return new ArrayBuilder({ type: "sort", source: this.node, sort })
+  map<R extends Type>(fn: (val: ExprBuilder<T>) => ExprBuilder<R>): ArrayBuilder<R> {
+    const map = withRowBuilder(this.node, fn)
+    return new ArrayBuilder({ type: "map", source: this.node, map })
+  }
+
+  limit(limit: number): ArrayBuilder<T> {
+    return new ArrayBuilder({ type: "limit", source: this.node, limit})
+  }
+
+  offset(offset: number): ArrayBuilder<T> {
+    return new ArrayBuilder({ type: "offset", source: this.node, offset})
+  }
+
+  union(other: ArrayBuilder<T>): ArrayBuilder<T> {
+    return new ArrayBuilder({type: "set_op", op: "union", left: this.node, right: other })
+  }
+
+  intersection(other: ArrayBuilder<T>): ArrayBuilder<T> {
+    return new ArrayBuilder({type: "set_op", op: "intersection", left: this.node, right: other })
+  }
+
+  difference(other: ArrayBuilder<T>): ArrayBuilder<T> {
+    return new ArrayBuilder({type: "set_op", op: "difference", left: this.node, right: other })
+  }
+
+  count(): NumberBuilder {
+    const node: Expr<NumberType> = {type: "count", source: this.node }
+    return new NumberBuilder(node)
+  }
+
+  average(): NumberBuilder {
+    const type = getType(this.node)
+    if (type.type !== "array") {
+      throw new Error("Cannot get average of non-array")
+    } else if (type.el.type !== "number") {
+      throw new Error("Cannot get average of non-numeric-array")
+    }
+    return new NumberBuilder({ type: 'number_window', op: "average", source: this.node as any});
+  }
+
+  max(): ExprBuilder<T> {
+    const type = getType(this.node)
+    if (type.type !== "array") {
+      throw new Error("Cannot get max of non-array")
+    } else if (type.el.type !== "number" && type.el.type !== "string") {
+      throw new Error("Cannot get average of non-numeric/string-array")
+    }
+
+    if (type.el.type === "number") {
+      return new NumberBuilder({ type: 'scalar_window', op: "max", source: this.node as any}) as any;
+    } else if (type.el.type === "string") {
+      return new StringBuilder({ type: 'scalar_window', op: "max", source: this.node as any}) as any;
+    } else {
+      throw new Error("Cannot get max of non-numeric/string-array")
+    }
+  }
+
+  min(): ExprBuilder<T> {
+    const type = getType(this.node)
+    if (type.type !== "array") {
+      throw new Error("Cannot get min of non-array")
+    } else if (type.el.type !== "number" && type.el.type !== "string") {
+      throw new Error("Cannot get average of non-numeric/string-array")
+    }
+
+    if (type.el.type === "number") {
+      return new NumberBuilder({ type: 'scalar_window', op: "max", source: this.node as any}) as any;
+    } else if (type.el.type === "string") {
+      return new StringBuilder({ type: 'scalar_window', op: "max", source: this.node as any}) as any;
+    } else {
+      throw new Error("Cannot get min of non-numeric/string-array")
+    }
+  }
+
+  // helpers
+  any(fn: (val: ExprBuilder<T>) => ExprBuilder<BoolType>): BooleanExpr {
+    return new BooleanBuilder({type: "
+  }
+
+  every(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
+    return new ExprBuilder(every<T>(this.node, fn))
+  }
+
+  averageOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
+    return new ExprBuilder(averageOf(this.node, fn))
+  }
+  maxOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
+    return new ExprBuilder(maxOf(this.node, fn))
+  }
+  minOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
+    return new ExprBuilder(minOf(this.node, fn))
   }
 }
 
-function withRowBuilder<A extends Type, B extends Type>(source: Expr<Array<A>>, fn: (builder: ExprBuilder<A>) => ExprBuilder<B>): Expr<B> {
-  const row: Expr<A> = { type: "row", source }
+function getArrayType(val: Array<unknown>): Type {
   // TODO
-  return row as any;
 }
 
-function toExpr<T extends Type>(val: T | Expr<T>) {
+function getType<T extends Type>(expr: Expr<T>): T {
+  if (expr.type === "field") {
+    const recordType = getType(expr.source) as any;
+    return recordType.fields[expr.field]
+  } else if (expr.type === "first") {
+    const arrayType = getType(expr.source)
+    return (arrayType.el as any)
+  } else if (expr.type === "row") {
+    const arrayType = getType(expr.source)
+    return (arrayType.el as any)
+  } else if (expr.type === "scalar_window") {
+    const arrayType = getType(expr.source) as any
+    return (arrayType.el as any)
+  }  else if (expr.type === "number") {
+    return {type: "number" } as any
+  } else if (expr.type === "math_op") {
+    return {type: "number" } as any
+  } else if (expr.type === "number_window") {
+    return {type: "number" } as any
+  } else if (expr.type === "count") {
+    return { type: "number" } as any
+  } else if (expr.type === "boolean") {
+    return { type: "boolean" } as any;
+  } else if (expr.type === "not") {
+    return { type: "boolean" } as any;
+  } else if (expr.type === "eq") {
+    return { type: "boolean" } as any;
+  } else if (expr.type === "comparison_op") {
+    return { type: "boolean" } as any;
+  } else if (expr.type === "logical_op") {
+    return { type: "boolean" } as any;
+  } else if (expr.type === "array") {
+    // TODO: support unknown arrays;
+    return getArrayType(expr.array) as any;
+  } else if (expr.type === "table") {
+    return expr.schema as any;
+  } else if (expr.type === "filter") {
+    return getType(expr.source) as any
+  } else if (expr.type === "sort") {
+    return getType(expr.source) as any;
+  } else if (expr.type === "limit") {
+    return getType(expr.source) as any;
+  } else if (expr.type === "offset") {
+    return getType(expr.source) as any;
+  } else if (expr.type === "set_op") {
+    return getType(expr.right) as any;
+  } else  if (expr.type === "map") {
+    const elType = getType(expr.map)
+    return {type: "array", el: elType} as any
+  } else if (expr.type === "flat_map") {
+    return getType(expr.flatMap) as any
+  } else if (expr.type === "group_by") {
+    const valType = getType(expr.source)
+    const keyType = getType(expr.key)
+    return {type: "record", fields: {vals: valType, key: keyType}} as any
+  } else if (expr.type === "string") {
+    return {type: "string"} as any
+  } else if (expr.type === "null") {
+    return {type: "null" } as any
+  } else {
+    return unreachable(expr)
+  }
+}
+
+function withRowBuilder<A extends Type, B extends Type>(source: Expr<ArrayTypeOf<A>>, fn: (builder: ExprBuilder<A>) => ExprBuilder<B>): Expr<B> {
+  // TODO
+  return source as any;
+}
+
+function toExpr<T extends Type>(val: LiteralOf<T> | Expr<T>): Expr<T> {
   // TODO
   return val as any
 }
 
+
 class NumberBuilder {
-  constructor(public node: Expr<number>) {}
+  constructor(public node: Expr<NumberType>) {}
 
   eq(value: Expr<Type> | Type): BooleanBuilder {
     return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
   }
 
-  gt(value: Expr<number> | number): BooleanBuilder {
-    return new BooleanBuilder({type: "comparison_op", op: "gt", left: this.node, right: toExpr(value)})
+  gt(value: Expr<NumberType> | number): BooleanBuilder {
+    const right = toExpr<NumberType>(value)
+    return new BooleanBuilder({type: "comparison_op", op: "gt", left: this.node, right})
   }
 
-  lt(value: Expr<number> | number): BooleanBuilder {
-    return new BooleanBuilder({type: "comparison_op", op: "lt", left: this.node, right: toExpr(value)})
+  lt(value: Expr<NumberType> | number): BooleanBuilder {
+    const right = toExpr<NumberType>(value)
+    return new BooleanBuilder({type: "comparison_op", op: "lt", left: this.node, right})
   }
 
-  minus(value: Expr<number> | number): NumberBuilder {
-    return new NumberBuilder({type: "math_op", op: "plus", left: this.node, right: toExpr(value)})
+  minus(value: Expr<NumberType> | number): NumberBuilder {
+    const right = toExpr<NumberType>(value)
+    return new NumberBuilder({type: "math_op", op: "plus", left: this.node, right})
   }
 
-  plus(value: Expr<number> | number): NumberBuilder {
-    return new NumberBuilder({type: "math_op", op: "minus", left: this.node, right: toExpr(value)})
+  plus(value: Expr<NumberType> | number): NumberBuilder {
+    const right = toExpr<NumberType>(value)
+    return new NumberBuilder({type: "math_op", op: "minus", left: this.node, right})
   }
 }
 
 class StringBuilder {
-  constructor(public node: Expr<string>) {}
+  constructor(public node: Expr<StringType>) {}
 
-  eq(value: Expr<string> | string): BooleanBuilder {
+  eq(value: Expr<StringType> | string): BooleanBuilder {
     return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
   }
 }
 
 class BooleanBuilder {
-  constructor(public node: Expr<boolean>) {}
+  constructor(public node: Expr<BoolType>) {}
 
   eq(value: Expr<Type> | Type): BooleanBuilder {
     return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
   }
 
-  and(value: Expr<boolean> | boolean): BooleanBuilder {
-    return new BooleanBuilder({type: "logical_op", op: "and", left: this.node, right: toExpr(value)})
+  and(value: Expr<BoolType> | boolean): BooleanBuilder {
+    const right = toExpr<BoolType>(value)
+    return new BooleanBuilder({type: "logical_op", op: "and", left: this.node, right})
   }
 
-  or(value: Expr<boolean> | boolean): BooleanBuilder {
-    return new BooleanBuilder({type: "logical_op", op: "or", left: this.node, right: toExpr(value)})
+  or(value: Expr<BoolType> | boolean): BooleanBuilder {
+    const right = toExpr<BoolType>(value)
+    return new BooleanBuilder({type: "logical_op", op: "or", left: this.node, right})
   }
 
   not(): BooleanBuilder {
@@ -248,29 +427,13 @@ class BooleanBuilder {
 }
 
 class NullBuilder {
-  constructor(public node: Expr<boolean>) {}
+  constructor(public node: Expr<NullType>) {}
 
   eq(value: Expr<Type> | Type): BooleanBuilder {
     return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
   }
 }
 
-type InferSchema<S extends Schema<any>> = S extends {type: "null"}
-  ? null
-  : S extends { type: "string" }
-  ? string
-  : S extends { type: "number" }
-  ? number
-  : S extends { type: "record", schema: infer S }
-     ? S extends {[key: string]: Schema<any>}
-      ? {[Key in keyof S]: InferSchema<S[Key]> }
-      : never
-  : S extends { type: "array", el: infer S}
-     ? S extends Schema<any>
-      ? InferSchema<S>
-      : never
-  : never
-
-export function Table<S extends Schema<any>>(name: string, schema: S): ArrayBuilder<InferSchema<S>> {
-  return new ArrayBuilder({type: "table", name, schema})
+function unreachable(val: never): never {
+  throw new Error(`Unexpected val: ${val}`)
 }
