@@ -97,7 +97,7 @@ Imagine we have the following tables:
   ...c,
    grades:  Enrollments
      .filter(e => e.class_id.eq(c.id).and(e.grade.neq(undefined)))
-     .map(e => ({grade: e.grade}))
+     .map(e => e.grade)
  })).filter(c => c.grades.max().minus(c.grades.min()).gte(20));
  ```
 

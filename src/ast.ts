@@ -80,389 +80,377 @@
  * 
  */
 
-import { mapValues } from "lodash"
+import { isNumber, isString, isBoolean, fromPairs } from "lodash"
 
-// ===== Core Scalar Types =====
-type Scalar = string | number | boolean | null;
+// ===== Embedded Types =====
+type NumberType = {type: "number" }
+type StringType = {type: "string" }
+type NullType = {type: "null"}
+type BoolType = {type: "bool"}
+type ScalarType = NumberType | StringType | NullType | BoolType
+type ArrayType = {type: "array", el: Type}
+type RecordType = {type: "record", fields: {[col: string]: Type}}
+type Type = ScalarType | ArrayType | RecordType
+
+type ArrayTypeOf<T extends Readonly<Type>> = { type: "array", el: T}
+type RecordTypeOf<T extends Record<string, Type>> = { type: "record", fields: {[K in keyof T]: T[K]}}
 
 // ===== Expression Types =====
-type ComparisonOperator = 'ne' | 'gt' | 'lt' | 'gte' | 'lte';
+type AnyExpr<T extends Type> = 
+  | { type: 'field'; source: Expr<RecordTypeOf<Record<string, T>>>; field: string }
+  | { type: 'first'; source: Expr<ArrayTypeOf<T>> }
+  | { type: 'row'; source: Expr<ArrayTypeOf<T>> }
+
+type ScalarWindowOperator = "max" | "min"
+type ScalarExpr<T extends Type> = never
+ | { type: 'scalar_window'; op: ScalarWindowOperator; source: Expr<ArrayTypeOf<T>> }
+
 type MathOperator = 'plus' | 'minus'
-type BinaryOperator = ComparisonOperator | MathOperator
+type NumberWindowOperator = "max" | "min" | "average"
+type NumberExpr = 
+  | { type: 'number'; number: number }
+  | { type: "math_op", op: MathOperator, left: Expr<NumberType>, right: Expr<NumberType> }
+ | { type: 'number_window'; op: NumberWindowOperator; source: Expr<ArrayTypeOf<NumberType>> }
+  | { type: 'count'; source: Expr<ArrayType> }
+
 type LogicalOperator = 'and' | 'or';
-type AggregateOperator = "count" | "average" | "max" | "min"
+type ComparisonOperator = 'gt' | 'lt' | 'gte' | 'lte';
+type BooleanExpr =
+ | { type: 'boolean'; boolean: boolean }
+ | { type: 'not'; expr: Expr<BoolType> }
+ | { type: "eq", left: Expr<ScalarType>, right: Expr<ScalarType> }
+ | { type: 'comparison_op'; op: ComparisonOperator; left: Expr<NumberType>; right: Expr<NumberType> }
+ | { type: 'logical_op'; op: LogicalOperator; left: Expr<BoolType>, right: Expr<BoolType> }
 
-export type Expr =
-  | { type: 'expr_column'; source: Query<Schema>; column: string }
-  | { type: 'value'; value: Scalar }
-  | { type: 'eq'; left: Expr; right: Expr }
-  | { type: 'binary_op'; op: BinaryOperator; left: Expr; right: Expr }
-  | { type: 'logical_op'; op: LogicalOperator; args: Array<Expr>}
-  | { type: 'not'; expr: Expr }
-  | { type: 'agg'; op: AggregateOperator; source: Query<Schema> }
+type StringExpr =  { type: "string", string: string }
+type NullExpr = { type: "null" }
 
-// ===== Query Nodes =====
-export type Query<S extends Schema> =
-  | { type: 'query_column'; source: Query<Schema>; column: string }
-  | { type: 'table'; name: string; schema: S }
-  | { type: 'filter'; source: Query<S>; filter: Expr }
-  | { type: 'map'; source: Query<Schema>, mapped: Projection<S> }
-  | { type: 'order_by'; source: Query<S>; orderings: OrderSpec[] }
-  | { type: 'limit'; source: Query<S>; limit: number }
-  | { type: 'offset'; source: Query<S>; offset: number }
-  | { type: 'set_op'; op: 'union' | 'intersect' | 'difference'; left: Query<S>; right: Query<S> }
-  | { type: 'group_by'; source: Query<Schema>; key: Expr };
+type ArrayExpr<T extends Type> =  never
+  | { type: 'array'; array: Array<any> }
+  | { type: 'table'; name: string; schema: T }
+  | { type: 'filter'; source: Expr<ArrayTypeOf<T>>; filter: Expr<BoolType> }
+  | { type: 'sort'; source: Expr<ArrayTypeOf<T>>; sort: Expr<Type> }
+  | { type: 'limit'; source: Expr<ArrayTypeOf<T>>; limit: number }
+  | { type: 'offset'; source: Expr<ArrayTypeOf<T>>; offset: number }
+  | { type: 'set_op'; op: 'union' | 'intersect' | 'difference'; left: Expr<ArrayTypeOf<T>>; right: Expr<ArrayTypeOf<T>> }
+  | { type: 'map'; source: Expr<ArrayTypeOf<Type>>, map: Expr<T> }
+  | { type: 'flat_map'; source: Expr<ArrayTypeOf<Type>>, flatMap: Expr<ArrayTypeOf<T>> }
+  | { type: 'group_by'; source: Expr<ArrayTypeOf<Type>>; key: Expr<Type> };
 
-type OrderSpec = { expr: Expr; direction: 'asc' | 'desc' };
+export type Expr<T extends Type> = { __brand?: T } & (
+  | (AnyExpr<T>)
+  | (T extends ScalarType ? ScalarExpr<T> : never)
+  | (T extends BoolType ? BooleanExpr : never)
+  | (T extends NumberType ? NumberExpr : never)
+  | (T extends StringType ? StringExpr : never)
+  | (T extends NullType ? NullExpr : never)
+  | (T extends ArrayTypeOf<infer ElemT> ? ElemT extends Type ? ArrayExpr<ElemT> : never : never)
+)
 
-// ===== Schema Types =====
-type ScalarType = 'uuid' | 'string' | 'number' | 'boolean' | 'unknown'
+type LiteralOf<T extends Type> = T extends { type: "null" }
+   ? null
+ : T extends { type: "string" }
+   ? string
+ : T extends { type: "bool" }
+   ? boolean
+ : T extends { type: "number" }
+   ? number
+ : T extends { type: "array", el: Type}
+    ? Array<LiteralOf<T["el"]>>
+  : T extends { type: "record", fields: {[col: string]: Type}}
+    ? {[K in keyof T["fields"]]: LiteralOf<T["fields"][K]>}
+  : never
 
-export type Schema = {[columnName: string]: Schema | ScalarType};
-type Projection<S extends Schema> = {[K in keyof S]: S[K] extends Schema ? Query<S[K]> : Expr}
-type ColumnAccessors<S extends Schema> = {
-  [K in keyof S]: S[K] extends Schema 
-    ? QueryBuilder<S[K]> 
-    : ExprBuilder
-};
+export type ExprBuilder<T extends Type> =  {__brand?: T} & (
+  T extends NullType ?
+     NullBuilder
+  : T extends BoolType ?
+     BooleanBuilder
+  : T extends NumberType ?
+    NumberBuilder
+  : T extends StringType ?
+    StringBuilder
+  : T extends ArrayTypeOf<infer ElemT> ?
+     ElemT extends Type 
+       ? ArrayBuilder<ElemT>
+       : never
+  : T extends RecordType ?
+    { [Key in keyof T["fields"]]: ExprBuilder<T["fields"][Key]> }
+  : never
+)
 
-// ===== ColumnExprBuilder =====
-class ExprBuilder {
-  constructor(public node: Expr) {}
+class ArrayBuilder<T extends Type> {
+  constructor(public node: Expr<ArrayTypeOf<T>>) {}
 
-  eq(value: Expr | Scalar): ExprBuilder {
-    return new ExprBuilder(eq(this.node, value))
+  filter(fn: (val: ExprBuilder<T>) => ExprBuilder<BoolType>): ArrayBuilder<T> {
+    const filter = withRowBuilder(this.node, fn)
+    return new ArrayBuilder({ type: "filter", source: this.node, filter })
   }
 
-  gt(value: Expr | number): ExprBuilder {
-    return new ExprBuilder(gt(this.node, value))
+  sort(fn: (val: ExprBuilder<T>) => ExprBuilder<Type>): ArrayBuilder<T> {
+    const sort = withRowBuilder(this.node, fn)
+    return new ArrayBuilder({ type: "sort", source: this.node, sort })
+  }
+  
+  groupBy<K extends Type>(fn: (val: ExprBuilder<T>) => ExprBuilder<K>): ArrayBuilder<RecordTypeOf<{key: K, values: ArrayTypeOf<T>}>> {
+    const key = withRowBuilder(this.node, fn)
+    return new ArrayBuilder({ type: "group_by", source: this.node, key })
   }
 
-  lt(value: Expr | number): ExprBuilder {
-    return new ExprBuilder(lt(this.node, value))
+  map<R extends Type>(fn: (val: ExprBuilder<T>) => ExprBuilder<R>): ArrayBuilder<R> {
+    const map = withRowBuilder(this.node, fn)
+    return new ArrayBuilder({ type: "map", source: this.node, map })
   }
 
-  minus(value: Expr | number): ExprBuilder {
-    return new ExprBuilder(minus(this.node, value))
+  limit(value: ValueOf<NumberType>): ArrayBuilder<T> {
+    const limit = toExpr<NumberType>(value);
+    return new ArrayBuilder({ type: "limit", source: this.node, limit})
   }
 
-  plus(value: Expr | number): ExprBuilder {
-    return new ExprBuilder(plus(this.node, value))
+  offset(value: number): ArrayBuilder<T> {
+    const offset = toExpr<NumberType>(value);
+    return new ArrayBuilder({ type: "offset", source: this.node, offset})
   }
 
-  and(expr: Expr): ExprBuilder {
-    return new ExprBuilder(and(this.node, expr))
+  union(other: ArrayBuilder<T>): ArrayBuilder<T> {
+    const right = toExpr<ArrayTypeOf<T>>(other);
+    return new ArrayBuilder({type: "set_op", op: "union", left: this.node, right })
   }
 
-  or(expr: Expr): ExprBuilder {
-    return new ExprBuilder(or(this.node, expr))
+  intersection(other: ArrayBuilder<T>): ArrayBuilder<T> {
+    const right = toExpr<ArrayTypeOf<T>>(other);
+    return new ArrayBuilder({type: "set_op", op: "intersect", left: this.node, right })
   }
 
-  not(): ExprBuilder {
-    return new ExprBuilder(not(this.node))
+  difference(other: ArrayBuilder<T>): ArrayBuilder<T> {
+    const right = toExpr<ArrayTypeOf<T>>(other);
+    return new ArrayBuilder({type: "set_op", op: "difference", left: this.node, right })
   }
 
-  asc(): OrderSpecBuilder {
-    return new OrderSpecBuilder({ expr: this.node, direction: 'asc' })
+  count(): NumberBuilder {
+    const node: Expr<NumberType> = {type: "count", source: this.node }
+    return new NumberBuilder(node)
   }
 
-  desc(): OrderSpecBuilder {
-    return new OrderSpecBuilder({ expr: this.node, direction: 'desc' });
-  }
-}
-
-// ===== Functional Core =====
-function val(value: Scalar): Expr {
-  return { type: 'value', value };
-}
-
-function toExpr(value: any): Expr {
-  return typeof value === 'object' && 'type' in value ? value : val(value);
-}
-
-function isScalarType(v: ScalarType | Schema): v is ScalarType {
-  if (v === "uuid" || v === "string" || v === "number" || v === "unknown" || v === "boolean") {
-    v satisfies ScalarType
-    return true;
-  } else  {
-    return false;
-  }
-}
-
-function isExpr(v: Expr | Query<Schema>): v is Expr {
-  if (v.type === "expr_column" 
-      || v.type === "value" 
-        || v.type === "eq" 
-          || v.type === "binary_op"
-            || v.type === "logical_op"
-              || v.type === "not"
-                || v.type === "agg") {
-                  v satisfies Expr
-                  return true;
-                }
-                v satisfies Query<Schema>;
-                return false;
-}
-
-function getSchema<S extends Schema>(source: Query<S>): S {
-  if (source.type === "table") {
-    return source.schema;
-  } else if (source.type === "limit") {
-    return getSchema(source.source);
-  } else if (source.type === "filter") {
-    return getSchema(source.source);
-  } else if (source.type === "offset") {
-    return getSchema(source.source);
-  } else if (source.type === "order_by") {
-    return getSchema(source.source);
-  } else if (source.type === "set_op") {
-    return getSchema(source.left);
-  } else if (source.type === "map") {
-    return mapValues(source.mapped, (v) => {
-      if (isExpr(v)) {
-        return "unknown";
-      } else {
-        return getSchema(v);
-      }
-    }) as S
-  } else if (source.type === "group_by") {
-    return {
-      key: "unknown",
-      values: getSchema(source.source),
-    } as unknown as S
-  } else if (source.type === "query_column") {
-    const parentSchema = getSchema(source.source)
-    return parentSchema[source.column] as S
-  } else {
-    return unreachable(source)
-  }
-}
-
-function toColumnAccessors<S extends Schema>(source: Query<S>): ColumnAccessors<S> {
-  const schema = getSchema(source);
-    return mapValues(schema, (v, k) => {
-      if (isScalarType(v)) {
-        return new ExprBuilder({type: "expr_column", source, column: k})
-      } else {
-        return new QueryBuilder({type: "query_column", source, column: k})
-      }
-    }) as ColumnAccessors<S>
-}
-
-function toProjection<S extends Schema>(cols: ColumnAccessors<S>): Projection<S> {
-  return mapValues(cols, v => v.node) as unknown as Projection<S>;
-}
-
-// ===== Functional Query Transformers =====
-function map<S extends Schema, F extends Schema>(
-  source: Query<S>,
-  fn: (cols: ColumnAccessors<S>) => Projection<F>
-): Query<F> {
-  const cols = toColumnAccessors(source)
-  return { type: 'map', source, mapped: fn(cols) }
-}
-
-function filter<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr): Query<S> {
-  const cols = toColumnAccessors(source);
-  return { type: 'filter', source, filter: fn(cols) }
-}
-
-function orderBy<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => OrderSpec[]): Query<S> {
-  const cols = toColumnAccessors(source);
-  return { type: 'order_by', source, orderings: fn(cols) };
-}
-
-function groupBy<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr): Query<{key: ScalarType, values: S}>   {
-  const cols = toColumnAccessors(source)
-  return { type: 'group_by', source, key: fn(cols) };
-}
-
-function limit<S extends Schema>(source: Query<S>, n: number): Query<S> {
-  return { type: 'limit', source, limit: n };
-}
-
-function offset<S extends Schema>(source: Query<S>, n: number): Query<S> {
-  return { type: 'offset', source, offset: n };
-}
-
-function union<S extends Schema>(left: Query<S>, right: Query<S>): Query<S> {
-  return { type: 'set_op', op: "union", left, right };
-}
-
-function intersect<S extends Schema>(left: Query<S>, right: Query<S>): Query<S> {
-  return { type: 'set_op', op: "intersect", left, right };
-}
-
-function difference<S extends Schema>(left: Query<S>, right: Query<S>): Query<S> {
-  return { type: 'set_op', op: "difference", left, right };
-}
-
-function count(source: Query<Schema>): Expr {
-  return { type: 'agg', op: 'count', source };
-}
-
-function max(source: Query<Schema>): Expr {
-  return { type: 'agg', op: 'max', source };
-}
-
-function min(source: Query<Schema>): Expr {
-  return { type: 'agg', op: 'min', source };
-}
-
-function average(source: Query<Schema>): Expr {
-  return { type: 'agg', op: 'average', source };
-}
-
-// compound helpers
-function averageOf<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr) {
-  return average(map(source, (cols) => ({val: fn(cols)})))
-}
-
-function maxOf<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr) {
-  return min(map(source, (cols) => ({val: fn(cols)})))
-}
-
-function minOf<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr) {
-  return max(map(source, (cols) => ({val: fn(cols)})))
-}
-
-function any<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr): Expr {
-  return gt(count(filter(source, fn)), 0)
-}
-
-function every<S extends Schema>(source: Query<S>, fn: (cols: ColumnAccessors<S>) => Expr): Expr {
-  const inverse = filter(source, (cols) => not(fn(cols)))
-  return eq(count(inverse), 0)
-}
-
-// ===== Functional Expression Builders + ColumnExprBuilder =====
-
-// ===== Functional Expression Builders =====
-function eq(left: Expr, right: Expr | Scalar): Expr {
-  return { type: 'eq', left, right: toExpr(right) };
-}
-
-function gt(left: Expr, right: Expr | Scalar): Expr {
-  return { type: 'binary_op', op: 'gt', left, right: toExpr(right) };
-}
-
-function lt(left: Expr, right: Expr | Scalar): Expr {
-  return { type: 'binary_op', op: 'lt', left, right: toExpr(right) };
-}
-
-function minus(left: Expr, right: Expr | Scalar): Expr {
-  return { type: 'binary_op', op: 'minus', left, right: toExpr(right) };
-}
-
-function plus(left: Expr, right: Expr | Scalar): Expr {
-  return { type: 'binary_op', op: 'plus', left, right: toExpr(right) };
-}
-
-function and(...args: Expr[]): Expr {
-  return { type: 'logical_op', op: 'and', args };
-}
-
-function or(...args: Expr[]): Expr {
-  return { type: 'logical_op', op: 'or', args };
-}
-
-function not(expr: Expr): Expr {
-  return { type: 'not', expr };
-}
-
-class OrderSpecBuilder {
-  constructor(private ref: OrderSpec) {}
-
-  toAST(): OrderSpec {
-    return this.ref;
-  }
-}
-
-// ===== QueryBuilder Class (Fluent Wrapper) =====
-class QueryBuilder<T extends Schema> {
-  constructor(public node: Query<T>) {}
-  toAST(): Query<T> {
-    return this.node;
+  average(): NumberBuilder {
+    const type = getType(this.node)
+    if (type.type !== "array") {
+      throw new Error("Cannot get average of non-array")
+    } else if (type.el.type !== "number") {
+      throw new Error("Cannot get average of non-numeric-array")
+    }
+    return new NumberBuilder({ type: 'number_window', op: "average", source: this.node as any});
   }
 
-  filter(fn: (cols: ColumnAccessors<T>) => Expr): QueryBuilder<T> {
-    return new QueryBuilder(filter<T>(this.node, fn));
+  max(): ExprBuilder<T> {
+    const type = getType(this.node)
+    if (type.type !== "array") {
+      throw new Error("Cannot get max of non-array")
+    } else if (type.el.type !== "number" && type.el.type !== "string") {
+      throw new Error("Cannot get average of non-numeric/string-array")
+    }
+
+    if (type.el.type === "number") {
+      return new NumberBuilder({ type: 'scalar_window', op: "max", source: this.node as any}) as any;
+    } else if (type.el.type === "string") {
+      return new StringBuilder({ type: 'scalar_window', op: "max", source: this.node as any}) as any;
+    } else {
+      throw new Error("Cannot get max of non-numeric/string-array")
+    }
   }
 
-  map<F extends Schema>(
-    fn: (cols: ColumnAccessors<T>) => ColumnAccessors<F>
-  ): QueryBuilder<F> {
-    return new QueryBuilder(map<T, F>(this.node, (source) => toProjection(fn(source))));
-  }
+  min(): ExprBuilder<T> {
+    const type = getType(this.node)
+    if (type.type !== "array") {
+      throw new Error("Cannot get min of non-array")
+    } else if (type.el.type !== "number" && type.el.type !== "string") {
+      throw new Error("Cannot get average of non-numeric/string-array")
+    }
 
-  orderBy(fn: (cols: ColumnAccessors<T>) => OrderSpec[]): QueryBuilder<T> {
-    return new QueryBuilder(orderBy<T>(this.node, fn));
-  }
-
-  groupBy(fn: (cols: ColumnAccessors<T>) => Expr): QueryBuilder<{ key: ScalarType; values: T }> {
-    return new QueryBuilder(groupBy<T>(this.node, fn));
-  }
-
-  limit(n: number): QueryBuilder<T> {
-    return new QueryBuilder(limit(this.node, n));
-  }
-
-  offset(n: number): QueryBuilder<T> {
-    return new QueryBuilder(offset(this.node, n));
-  }
-
-  union(other: QueryBuilder<T>): QueryBuilder<T> {
-    return new QueryBuilder(union(this.node, other.node));
-  }
-
-  intersect(other: QueryBuilder<T>): QueryBuilder<T> {
-    return new QueryBuilder(intersect(this.node, other.node));
-  }
-
-  difference(other: QueryBuilder<T>): QueryBuilder<T> {
-    return new QueryBuilder(difference(this.node, other.node))
-  }
-
-  count(): ExprBuilder {
-    return new ExprBuilder(count(this.node))
-  }
-
-  average(): ExprBuilder {
-    return new ExprBuilder(average(this.node))
-  }
-
-  max(): ExprBuilder {
-    return new ExprBuilder(max(this.node))
-  }
-
-  min(): ExprBuilder {
-    return new ExprBuilder(min(this.node))
+    if (type.el.type === "number") {
+      return new NumberBuilder({ type: 'scalar_window', op: "min", source: this.node as any}) as any;
+    } else if (type.el.type === "string") {
+      return new StringBuilder({ type: 'scalar_window', op: "min", source: this.node as any}) as any;
+    } else {
+      throw new Error("Cannot get min of non-numeric/string-array")
+    }
   }
 
   // helpers
-  any(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
-    return new ExprBuilder(any<T>(this.node, fn))
+  any(fn: (val: ExprBuilder<T>) => ExprBuilder<BoolType>): BooleanBuilder {
+    return this.filter(fn).count().gt(0)
   }
 
-  every(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
-    return new ExprBuilder(every<T>(this.node, fn))
-  }
-
-  averageOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
-    return new ExprBuilder(averageOf(this.node, fn))
-  }
-  maxOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
-    return new ExprBuilder(maxOf(this.node, fn))
-  }
-  minOf(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder {
-    return new ExprBuilder(minOf(this.node, fn))
+  every(fn: (val: ExprBuilder<T>) => ExprBuilder<BoolType>): BooleanBuilder {
+    return this.filter((val) => fn(val).not()).count().eq(0)
   }
 }
 
-export function Table<S extends Schema>(name: string, schema: S): QueryBuilder<S> {
-  return new QueryBuilder({type: "table", name, schema})
+function getLiteralType(val: unknown): Type {
+  if (val === null) {
+    return {type: "null" }
+  } else if (isNumber(val)) {
+    return {type: "number"}
+  } else if (isString(val)) {
+    return {type: "string" }
+  } else if (isBoolean(val)) {
+    return {type: "bool" }
+  } else if (val instanceof Array) {
+    return {type: "array", el: getLiteralType(val[0]) }
+  } else if (val instanceof Object) {
+    const fields = fromPairs(Object.entries(val).map(([k, v]) => [k, getLiteralType(v)])) as any
+    return { type: "record", fields }
+  } else {
+    throw new Error("Wat")
+  }
 }
 
-export function unreachable(v: never): never {
-  throw new Error(`Expected ${v} to be unreachale`)
+function getType<T extends Type>(expr: Expr<T>): T {
+  if (expr.type === "field") {
+    const recordType = getType(expr.source) as any;
+    return recordType.fields[expr.field]
+  } else if (expr.type === "first") {
+    const arrayType = getType(expr.source)
+    return (arrayType.el as any)
+  } else if (expr.type === "row") {
+    const arrayType = getType(expr.source)
+    return (arrayType.el as any)
+  } else if (expr.type === "scalar_window") {
+    const arrayType = getType(expr.source) as any
+    return (arrayType.el as any)
+  }  else if (expr.type === "number") {
+    return {type: "number" } as any
+  } else if (expr.type === "math_op") {
+    return {type: "number" } as any
+  } else if (expr.type === "number_window") {
+    return {type: "number" } as any
+  } else if (expr.type === "count") {
+    return { type: "number" } as any
+  } else if (expr.type === "boolean") {
+    return { type: "bool" } as Type as any;
+  } else if (expr.type === "not") {
+    return { type: "bool" } as any;
+  } else if (expr.type === "eq") {
+    return { type: "bool" } as any;
+  } else if (expr.type === "comparison_op") {
+    return { type: "bool" } as any;
+  } else if (expr.type === "logical_op") {
+    return { type: "bool" } as any;
+  } else if (expr.type === "array") {
+    // TODO: support unknown arrays;
+    return getLiteralType(expr.array) as any;
+  } else if (expr.type === "table") {
+    return expr.schema as any;
+  } else if (expr.type === "filter") {
+    return getType(expr.source) as any
+  } else if (expr.type === "sort") {
+    return getType(expr.source) as any;
+  } else if (expr.type === "limit") {
+    return getType(expr.source) as any;
+  } else if (expr.type === "offset") {
+    return getType(expr.source) as any;
+  } else if (expr.type === "set_op") {
+    return getType(expr.right) as any;
+  } else  if (expr.type === "map") {
+    const elType = getType(expr.map)
+    return {type: "array", el: elType} as any
+  } else if (expr.type === "flat_map") {
+    return getType(expr.flatMap) as any
+  } else if (expr.type === "group_by") {
+    const valType = getType(expr.source)
+    const keyType = getType(expr.key)
+    return {type: "record", fields: {vals: valType, key: keyType}} as any
+  } else if (expr.type === "string") {
+    return {type: "string"} as any
+  } else if (expr.type === "null") {
+    return {type: "null" } as any
+  } else {
+    return unreachable(expr)
+  }
+}
+
+function withRowBuilder<A extends Type, B extends Type>(source: Expr<ArrayTypeOf<A>>, fn: (builder: ExprBuilder<A>) => ExprBuilder<B>): Expr<B> {
+  // TODO
+  return source as any;
+}
+
+function toExpr<T extends Type>(val: ValueOf<T>): Expr<T> {
+  // TODO
+  return val as any
+}
+
+type ValueOf<T extends Type> = LiteralOf<T> | Expr<T> | ExprBuilder<T>
+
+
+class NumberBuilder {
+  constructor(public node: Expr<NumberType>) {}
+
+  eq(value: ValueOf<NumberType>): BooleanBuilder {
+    const right = toExpr<NumberType>(value);
+    return new BooleanBuilder({type: "eq", left: this.node, right})
+  }
+
+  gt(value: ValueOf<NumberType>): BooleanBuilder {
+    const right = toExpr<NumberType>(value)
+    return new BooleanBuilder({type: "comparison_op", op: "gt", left: this.node, right})
+  }
+
+  lt(value: ValueOf<NumberType>): BooleanBuilder {
+    const right = toExpr<NumberType>(value)
+    return new BooleanBuilder({type: "comparison_op", op: "lt", left: this.node, right})
+  }
+
+  minus(value: ValueOf<NumberType>): NumberBuilder {
+    const right = toExpr<NumberType>(value)
+    return new NumberBuilder({type: "math_op", op: "minus", left: this.node, right})
+  }
+
+  plus(value: ValueOf<NumberType>): NumberBuilder {
+    const right = toExpr<NumberType>(value)
+    return new NumberBuilder({type: "math_op", op: "plus", left: this.node, right})
+  }
+}
+
+class StringBuilder {
+  constructor(public node: Expr<StringType>) {}
+
+  eq(value: ValueOf<StringType>): BooleanBuilder {
+    const right = toExpr<StringType>(value);
+    return new BooleanBuilder({type: "eq", left: this.node, right})
+  }
+}
+
+class BooleanBuilder {
+  constructor(public node: Expr<BoolType>) {}
+
+  eq(value: ValueOf<BoolType>): BooleanBuilder {
+    const right = toExpr<BoolType>(value);
+    return new BooleanBuilder({type: "eq", left: this.node, right})
+  }
+
+  and(value: ValueOf<BoolType>): BooleanBuilder {
+    const right = toExpr<BoolType>(value)
+    return new BooleanBuilder({type: "logical_op", op: "and", left: this.node, right})
+  }
+
+  or(value: ValueOf<BoolType>): BooleanBuilder {
+    const right = toExpr<BoolType>(value)
+    return new BooleanBuilder({type: "logical_op", op: "or", left: this.node, right})
+  }
+
+  not(): BooleanBuilder {
+    return new BooleanBuilder({type: "not", expr: this.node})
+  }
+}
+
+class NullBuilder {
+  constructor(public node: Expr<NullType>) {}
+
+  or(value: ValueOf<NullType>): BooleanBuilder {
+    return new BooleanBuilder({type: "eq", left: this.node, right: toExpr(value)})
+  }
+}
+
+function unreachable(val: never): never {
+  throw new Error(`Unexpected val: ${val}`)
 }
