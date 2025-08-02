@@ -327,7 +327,7 @@ function getType<T extends Type>(expr: Expr<T>): T {
   } else if (expr.type === "count") {
     return { type: "number" } as any
   } else if (expr.type === "boolean") {
-    return { type: "bool" } as any;
+    return { type: "bool" } as Type as any;
   } else if (expr.type === "not") {
     return { type: "bool" } as any;
   } else if (expr.type === "eq") {
