@@ -73,7 +73,7 @@ Imagine we have the following tables:
      .map(c => ({
        averageStudentAge: Students.filter(s => 
          Enrollments.some(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))
-       ).averageOf(s => s.age)
+       ).map(s => s.age()).average()
      }))
      .filter(c => c.averageStudentAge.gt(20))
  }));
