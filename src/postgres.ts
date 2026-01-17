@@ -9,7 +9,7 @@ function aliasHash(str: string) {
 }
 function isExpr(x: any): x is Expr {
   return x && typeof x === "object" && "type" in x && [
-    "column_ref_expr", "column", "value", "eq", "binary_op", "logical_op", "not", "agg"
+    "expr_column", "value", "eq", "binary_op", "logical_op", "not", "agg"
   ].includes(x.type);
 }
 

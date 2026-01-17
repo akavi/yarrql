@@ -177,7 +177,7 @@ function val(value: Scalar): Expr {
 }
 
 function toExpr(value: any): Expr {
-  return typeof value === 'object' && 'type' in value ? value : val(value);
+  return typeof value === 'object' && value !== null && 'type' in value ? value : val(value);
 }
 
 function isScalarType(v: ScalarType | Schema): v is ScalarType {
