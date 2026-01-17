@@ -95,6 +95,10 @@ type Type = ScalarType | ArrayType | RecordType
 type ArrayTypeOf<T extends Readonly<Type>> = { type: "array", el: T}
 type RecordTypeOf<T extends Record<string, Type>> = { type: "record", fields: {[K in keyof T]: T[K]}}
 
+// Export Schema and Query types for SQL generation
+export type Schema = RecordType
+export type Query<S extends Schema> = Expr<ArrayTypeOf<S>>
+
 // ===== Expression Types =====
 type AnyExpr<T extends Type> = 
   | { type: 'field'; source: Expr<RecordTypeOf<Record<string, T>>>; field: string }
@@ -184,51 +188,51 @@ class ArrayBuilder<T extends Type> {
 
   filter(fn: (val: ExprBuilder<T>) => ExprBuilder<BoolType>): ArrayBuilder<T> {
     const filter = withRowBuilder(this.node, fn)
-    return new ArrayBuilder({ type: "filter", source: this.node, filter })
+    return new ArrayBuilder({ type: "filter", source: this.node, filter } as Expr<ArrayTypeOf<T>>)
   }
 
   sort(fn: (val: ExprBuilder<T>) => ExprBuilder<Type>): ArrayBuilder<T> {
     const sort = withRowBuilder(this.node, fn)
-    return new ArrayBuilder({ type: "sort", source: this.node, sort })
+    return new ArrayBuilder({ type: "sort", source: this.node, sort } as Expr<ArrayTypeOf<T>>)
   }
-  
+
   groupBy<K extends Type>(fn: (val: ExprBuilder<T>) => ExprBuilder<K>): ArrayBuilder<RecordTypeOf<{key: K, values: ArrayTypeOf<T>}>> {
     const key = withRowBuilder(this.node, fn)
-    return new ArrayBuilder({ type: "group_by", source: this.node, key })
+    return new ArrayBuilder({ type: "group_by", source: this.node, key } as any)
   }
 
   map<R extends Type>(fn: (val: ExprBuilder<T>) => ExprBuilder<R>): ArrayBuilder<R> {
     const map = withRowBuilder(this.node, fn)
-    return new ArrayBuilder({ type: "map", source: this.node, map })
+    return new ArrayBuilder({ type: "map", source: this.node, map } as Expr<ArrayTypeOf<R>>)
   }
 
   limit(value: ValueOf<NumberType>): ArrayBuilder<T> {
     const limit = toExpr<NumberType>(value);
-    return new ArrayBuilder({ type: "limit", source: this.node, limit})
+    return new ArrayBuilder({ type: "limit", source: this.node, limit} as Expr<ArrayTypeOf<T>>)
   }
 
   offset(value: number): ArrayBuilder<T> {
     const offset = toExpr<NumberType>(value);
-    return new ArrayBuilder({ type: "offset", source: this.node, offset})
+    return new ArrayBuilder({ type: "offset", source: this.node, offset} as Expr<ArrayTypeOf<T>>)
   }
 
-  union(other: ArrayBuilder<T>): ArrayBuilder<T> {
-    const right = toExpr<ArrayTypeOf<T>>(other);
-    return new ArrayBuilder({type: "set_op", op: "union", left: this.node, right })
+  union(other: ArrayBuilder<T> | Expr<ArrayTypeOf<T>>): ArrayBuilder<T> {
+    const right = other instanceof ArrayBuilder ? other.node : other;
+    return new ArrayBuilder({type: "set_op", op: "union", left: this.node, right } as Expr<ArrayTypeOf<T>>)
   }
 
-  intersection(other: ArrayBuilder<T>): ArrayBuilder<T> {
-    const right = toExpr<ArrayTypeOf<T>>(other);
-    return new ArrayBuilder({type: "set_op", op: "intersect", left: this.node, right })
+  intersection(other: ArrayBuilder<T> | Expr<ArrayTypeOf<T>>): ArrayBuilder<T> {
+    const right = other instanceof ArrayBuilder ? other.node : other;
+    return new ArrayBuilder({type: "set_op", op: "intersect", left: this.node, right } as Expr<ArrayTypeOf<T>>)
   }
 
-  difference(other: ArrayBuilder<T>): ArrayBuilder<T> {
-    const right = toExpr<ArrayTypeOf<T>>(other);
-    return new ArrayBuilder({type: "set_op", op: "difference", left: this.node, right })
+  difference(other: ArrayBuilder<T> | Expr<ArrayTypeOf<T>>): ArrayBuilder<T> {
+    const right = other instanceof ArrayBuilder ? other.node : other;
+    return new ArrayBuilder({type: "set_op", op: "difference", left: this.node, right } as Expr<ArrayTypeOf<T>>)
   }
 
   count(): NumberBuilder {
-    const node: Expr<NumberType> = {type: "count", source: this.node }
+    const node: Expr<NumberType> = {type: "count", source: this.node as Expr<ArrayType> }
     return new NumberBuilder(node)
   }
 
@@ -316,7 +320,7 @@ function getType<T extends Type>(expr: Expr<T>): T {
     const arrayType = getType(expr.source)
     return (arrayType.el as any)
   } else if (expr.type === "scalar_window") {
-    const arrayType = getType(expr.source) as any
+    const arrayType = getType(expr.source as any) as any
     return (arrayType.el as any)
   }  else if (expr.type === "number") {
     return {type: "number" } as any
@@ -342,20 +346,20 @@ function getType<T extends Type>(expr: Expr<T>): T {
   } else if (expr.type === "table") {
     return expr.schema as any;
   } else if (expr.type === "filter") {
-    return getType(expr.source) as any
+    return getType(expr.source as any) as any
   } else if (expr.type === "sort") {
-    return getType(expr.source) as any;
+    return getType(expr.source as any) as any;
   } else if (expr.type === "limit") {
-    return getType(expr.source) as any;
+    return getType(expr.source as any) as any;
   } else if (expr.type === "offset") {
-    return getType(expr.source) as any;
+    return getType(expr.source as any) as any;
   } else if (expr.type === "set_op") {
-    return getType(expr.right) as any;
+    return getType(expr.right as any) as any;
   } else  if (expr.type === "map") {
-    const elType = getType(expr.map)
+    const elType = getType(expr.map as any)
     return {type: "array", el: elType} as any
   } else if (expr.type === "flat_map") {
-    return getType(expr.flatMap) as any
+    return getType(expr.flatMap as any) as any
   } else if (expr.type === "group_by") {
     const valType = getType(expr.source)
     const keyType = getType(expr.key)
@@ -375,7 +379,32 @@ function withRowBuilder<A extends Type, B extends Type>(source: Expr<ArrayTypeOf
 }
 
 function toExpr<T extends Type>(val: ValueOf<T>): Expr<T> {
-  // TODO
+  // If it's already an Expr, return it
+  if (typeof val === 'object' && val !== null && '__brand' in val) {
+    // It's either an Expr or ExprBuilder
+    if (val instanceof ArrayBuilder || val instanceof NumberBuilder ||
+        val instanceof StringBuilder || val instanceof BooleanBuilder ||
+        val instanceof NullBuilder) {
+      return val.node as Expr<T>
+    }
+    // It's already an Expr
+    return val as Expr<T>
+  }
+
+  // Convert literal to Expr
+  if (val === null) {
+    return { type: 'null' } as Expr<T>
+  } else if (typeof val === 'number') {
+    return { type: 'number', number: val } as Expr<T>
+  } else if (typeof val === 'string') {
+    return { type: 'string', string: val } as Expr<T>
+  } else if (typeof val === 'boolean') {
+    return { type: 'boolean', boolean: val } as Expr<T>
+  } else if (Array.isArray(val)) {
+    return { type: 'array', array: val } as Expr<T>
+  }
+
+  // Fallback
   return val as any
 }
 
@@ -451,6 +480,6 @@ class NullBuilder {
   }
 }
 
-function unreachable(val: never): never {
+export function unreachable(val: never): never {
   throw new Error(`Unexpected val: ${val}`)
 }
