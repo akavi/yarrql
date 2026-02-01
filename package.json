@@ -2,7 +2,7 @@
   "name": "yarrql",
   "version": "1.0.0",
   "description": "YARRQL - Yet Another Recursive Relational Query Language",
-  "author": "Arjun Kavi"
+  "author": "Arjun Kavi",
   "main": "index.js",
   "license": "MIT",
   "private": false,

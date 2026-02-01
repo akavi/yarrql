@@ -330,9 +330,11 @@ Teachers.map(t => ({
 As the long list here suggests, this is pre-pre-alpha. Not fit for actual production use anywhere
 
 1. Allow querying on tables without specifying their schema (at the cost of type safety)
-2. A Chrome plugin to generate SQL from YARRQL on the fly
-3. Support for more than just Postgres dialect SQL
-4. (one day?) A native language format, rather than hosted in TS/JS
+2. Think through how to handle union types
+3. Looooot more testing
+4. Integrations (A Chrome plugin? DB clients? etc)
+5. Support for more than just Postgres/Trino dialect SQL
+6. (one day?) A native language format, rather than hosted in TS/JS
 
 ## Name
 

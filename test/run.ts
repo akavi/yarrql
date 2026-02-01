@@ -214,8 +214,80 @@ async function main() {
     console.log("Error:", err.message)
   }
 
+  // ==============================================
+  // SCHEMALESS TABLE TESTS
+  // ==============================================
+
+  console.log("\n=== Test 9: Schemaless tables - basic filter ===")
+  // Define tables WITHOUT schema - dynamic mode, no type safety
+  const DynStudents = Table("student")
+  const DynEnrollments = Table("enrollment")
+  const DynClasses = Table("class")
+  const DynTeachers = Table("teacher")
+
+  // Filter students over 20 - same query as Test 1
+  const dynAdultStudents = DynStudents.filter((s: any) => s.age.gt(20))
+  const sqlDyn1 = toSql(dynAdultStudents.__node)
+  console.log("SQL:", sqlDyn1)
+  try {
+    const resDyn1 = await client.query(`SELECT * FROM ${sqlDyn1}`)
+    console.log("Results:", resDyn1.rows)
+  } catch (err: any) {
+    console.log("Error:", err.message)
+  }
+
+  console.log("\n=== Test 10: Schemaless tables - nested query ===")
+  // Teachers with their classes - tests nested queries work with dynamic builders
+  const dynTeachersWithClasses = DynTeachers.map((t: any) => ({
+    id: t.id,
+    name: t.name,
+    classes: DynClasses.filter((c: any) => c.teacher_id.eq(t.id))
+  }))
+  const sqlDyn2 = toSql(dynTeachersWithClasses.__node)
+  console.log("SQL:", sqlDyn2)
+  try {
+    const resDyn2 = await client.query(`SELECT * FROM ${sqlDyn2}`)
+    console.log("Results:", JSON.stringify(resDyn2.rows, null, 2))
+  } catch (err: any) {
+    console.log("Error:", err.message)
+  }
+
+  console.log("\n=== Test 11: Schemaless tables - complex query ===")
+  // Teachers with students via enrollments - complex nested query
+  const dynTeachersWithStudents = DynTeachers.map<{t: string}>((t: any) => ({
+    id: t.id,
+    name: t.name,
+    students: DynStudents.filter((s: any) =>
+      DynEnrollments.any((e: any) =>
+        DynClasses.any((c: any) =>
+          c.teacher_id.eq(t.id).and(c.id.eq(e.class_id)).and(e.student_id.eq(s.id))
+        )
+      )
+    )
+  }))
+  const sqlDyn3 = toSql(dynTeachersWithStudents.__node)
+  console.log("SQL:", sqlDyn3)
+  try {
+    const resDyn3 = await client.query(`SELECT * FROM ${sqlDyn3}`)
+    console.log("Results:", JSON.stringify(resDyn3.rows, null, 2))
+  } catch (err: any) {
+    console.log("Error:", err.message)
+  }
+
+  console.log("\n=== Test 12: Schemaless tables - aggregations ===")
+  // Count and average on schemaless tables
+  const dynStudentStats = DynStudents.map((s: any) => s.age).average()
+  const sqlDyn4 = `SELECT ${toSql(dynStudentStats.__node as any)} as avg_age`
+  console.log("SQL:", sqlDyn4)
+  try {
+    const resDyn4 = await client.query(sqlDyn4)
+    console.log("Results:", resDyn4.rows)
+  } catch (err: any) {
+    console.log("Error:", err.message)
+  }
+
   await client.end()
-  console.log("Done!")
+  console.log("\nDone!")
 }
 
 main().catch(err => {

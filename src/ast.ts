@@ -87,10 +87,12 @@ type NumberType = {__kind: "number" }
 type StringType = {__kind: "string" }
 type NullType = {__kind: "null"}
 type BoolType = {__kind: "bool"}
+type UnknownType = {__kind: "unknown"}
 type ScalarType = NumberType | StringType | NullType | BoolType
 type ArrayType = {__kind: "array", __el: Type}
 type RecordType = {__kind: "record", __fields: {[col: string]: Type}}
-type Type = ScalarType | ArrayType | RecordType
+type UnknownRecordType = {__kind: "unknown_record"}
+type Type = ScalarType | ArrayType | RecordType | UnknownType | UnknownRecordType
 
 type ArrayTypeOf<T extends Readonly<Type>> = { __kind: "array", __el: T}
 type RecordTypeOf<T extends Record<string, Type>> = { __kind: "record", __fields: {[K in keyof T]: T[K]}}
@@ -256,7 +258,7 @@ class ArrayBuilder<T extends Type> {
     const type = getType(this.__node)
     if (type.__kind !== "array") {
       throw new Error("Cannot get average of non-array")
-    } else if (type.__el.__kind !== "number") {
+    } else if (type.__el.__kind !== "number" && type.__el.__kind !== "unknown") {
       throw new Error("Cannot get average of non-numeric-array")
     }
     return new NumberBuilder({ __type: 'number_window', __op: "average", __source: this.__node as Expr<ArrayTypeOf<NumberType>>});
@@ -266,7 +268,7 @@ class ArrayBuilder<T extends Type> {
     const type = getType(this.__node)
     if (type.__kind !== "array") {
       throw new Error("Cannot get sum of non-array")
-    } else if (type.__el.__kind !== "number") {
+    } else if (type.__el.__kind !== "number" && type.__el.__kind !== "unknown") {
       throw new Error("Cannot get sum of non-numeric-array")
     }
     return new NumberBuilder({ __type: 'number_window', __op: "sum", __source: this.__node as Expr<ArrayTypeOf<NumberType>>});
@@ -276,16 +278,20 @@ class ArrayBuilder<T extends Type> {
     const type = getType(this.__node)
     if (type.__kind !== "array") {
       throw new Error("Cannot get max of non-array")
-    } else if (type.__el.__kind !== "number" && type.__el.__kind !== "string") {
+    }
+    const elKind = type.__el.__kind;
+    // Allow unknown types (schemaless) - errors will surface at Postgres runtime
+    if (elKind !== "number" && elKind !== "string" && elKind !== "unknown") {
       throw new Error("Cannot get max of non-numeric/string-array")
     }
 
-    if (type.__el.__kind === "number") {
+    if (elKind === "number") {
       return new NumberBuilder({ __type: 'scalar_window', __op: "max", __source: this.__node as Expr<ArrayTypeOf<NumberType>>}) as unknown as ExprBuilder<T>;
-    } else if (type.__el.__kind === "string") {
+    } else if (elKind === "string") {
       return new StringBuilder({ __type: 'scalar_window', __op: "max", __source: this.__node as Expr<ArrayTypeOf<StringType>>}) as unknown as ExprBuilder<T>;
     } else {
-      throw new Error("Cannot get max of non-numeric/string-array")
+      // Unknown type - return DynamicBuilder
+      return createDynamicBuilder({ __type: 'scalar_window', __op: "max", __source: this.__node } as Expr<any>) as unknown as ExprBuilder<T>;
     }
   }
 
@@ -293,23 +299,27 @@ class ArrayBuilder<T extends Type> {
     const type = getType(this.__node)
     if (type.__kind !== "array") {
       throw new Error("Cannot get min of non-array")
-    } else if (type.__el.__kind !== "number" && type.__el.__kind !== "string") {
+    }
+    const elKind = type.__el.__kind;
+    // Allow unknown types (schemaless) - errors will surface at Postgres runtime
+    if (elKind !== "number" && elKind !== "string" && elKind !== "unknown") {
       throw new Error("Cannot get min of non-numeric/string-array")
     }
 
-    if (type.__el.__kind === "number") {
+    if (elKind === "number") {
       return new NumberBuilder({ __type: 'scalar_window', __op: "min", __source: this.__node as Expr<ArrayTypeOf<NumberType>>}) as unknown as ExprBuilder<T>;
-    } else if (type.__el.__kind === "string") {
+    } else if (elKind === "string") {
       return new StringBuilder({ __type: 'scalar_window', __op: "min", __source: this.__node as Expr<ArrayTypeOf<StringType>>}) as unknown as ExprBuilder<T>;
     } else {
-      throw new Error("Cannot get min of non-numeric/string-array")
+      // Unknown type - return DynamicBuilder
+      return createDynamicBuilder({ __type: 'scalar_window', __op: "min", __source: this.__node } as Expr<any>) as unknown as ExprBuilder<T>;
     }
   }
 
   first(): ExprBuilder<T> {
     const firstExpr: Expr<T> = { __type: 'first', __source: this.__node } as Expr<T>;
     const elemType = getType(this.__node);
-    if (elemType.__kind !== "array") {
+    if (elemType.__kind !== "array" && elemType.__kind !== "unknown") {
       throw new Error("Cannot get first of non-array");
     }
     return createBuilder(firstExpr, elemType.__el as T);
@@ -354,17 +364,29 @@ function getLiteralType(val: unknown): Type {
 function getType<T extends Type>(expr: Expr<T>): T {
   const t = (expr as any).__type;
   if (t === "field") {
-    const recordType = getType((expr as any).__source as Expr<RecordType>) as RecordType;
-    return recordType.__fields[(expr as any).__field] as T
+    const recordType = getType((expr as any).__source as Expr<Type>) as Type;
+    if (recordType.__kind === "unknown_record" || recordType.__kind === "unknown") {
+      return { __kind: "unknown" } as T;
+    }
+    return (recordType as RecordType).__fields[(expr as any).__field] as T
   } else if (t === "first") {
-    const arrayType = getType((expr as any).__source as Expr<ArrayType>) as ArrayType
-    return arrayType.__el as T
+    const arrayType = getType((expr as any).__source as Expr<Type>) as Type
+    if (arrayType.__kind === "unknown" || arrayType.__kind === "unknown_record") {
+      return { __kind: "unknown" } as T;
+    }
+    return (arrayType as ArrayType).__el as T
   } else if (t === "row") {
-    const arrayType = getType((expr as any).__source as Expr<ArrayType>) as ArrayType
-    return arrayType.__el as T
+    const arrayType = getType((expr as any).__source as Expr<Type>) as Type
+    if (arrayType.__kind === "unknown" || arrayType.__kind === "unknown_record") {
+      return { __kind: "unknown" } as T;
+    }
+    return (arrayType as ArrayType).__el as T
   } else if (t === "scalar_window") {
-    const arrayType = getType((expr as any).__source as Expr<ArrayType>) as ArrayType
-    return arrayType.__el as T
+    const arrayType = getType((expr as any).__source as Expr<Type>) as Type
+    if (arrayType.__kind === "unknown" || arrayType.__kind === "unknown_record") {
+      return { __kind: "unknown" } as T;
+    }
+    return (arrayType as ArrayType).__el as T
   }  else if (t === "number") {
     return {__kind: "number" } as T
   } else if (t === "math_op") {
@@ -458,6 +480,8 @@ function createBuilder<T extends Type>(expr: Expr<T>, type: T): ExprBuilder<T> {
       result[fieldName] = createBuilder(fieldExpr, fieldType);
     }
     return result as unknown as ExprBuilder<T>;
+  } else if (type.__kind === "unknown" || type.__kind === "unknown_record") {
+    return createDynamicBuilder(expr as Expr<any>) as unknown as ExprBuilder<T>;
   }
   throw new Error(`Unknown type: ${(type as Type).__kind}`);
 }
@@ -475,6 +499,13 @@ function valueToExpr<T extends Type>(val: ValueOf<T>): Expr<T> {
     return val.__node as Expr<T>;
   } else if (val instanceof NullBuilder) {
     return val.__node as Expr<T>;
+  } else if (val instanceof DynamicBuilder) {
+    return val.__node as Expr<T>;
+  }
+
+  // Handle DynamicBuilder proxies (check for __node property)
+  if (typeof val === 'object' && val !== null && '__node' in val && typeof (val as any).__node === 'object') {
+    return (val as any).__node as Expr<T>;
   }
 
   // Handle literals
@@ -528,8 +559,13 @@ function toExpr<T extends Type>(val: ValueOf<T>): Expr<T> {
   // Check for builder instances first (they don't have __brand)
   if (val instanceof ArrayBuilder || val instanceof NumberBuilder ||
       val instanceof StringBuilder || val instanceof BooleanBuilder ||
-      val instanceof NullBuilder) {
+      val instanceof NullBuilder || val instanceof DynamicBuilder) {
     return val.__node as Expr<T>
+  }
+
+  // Handle DynamicBuilder proxies (check for __node property)
+  if (typeof val === 'object' && val !== null && '__node' in val && typeof (val as any).__node === 'object') {
+    return (val as any).__node as Expr<T>;
   }
 
   // If it's already an Expr (has __brand or __type), return it
@@ -716,6 +752,238 @@ class NullBuilder {
   }
 }
 
+// DynamicBuilder for schemaless tables - supports all operations
+class DynamicBuilder {
+  constructor(public __node: Expr<any>) {}
+
+  // === Number operations ===
+  eq(value: any): BooleanBuilder {
+    const __right = value === null ? { __type: 'null' } as Expr<NullType> : toExpr<any>(value);
+    return new BooleanBuilder({__type: "eq", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  neq(value: any): BooleanBuilder {
+    return this.eq(value).not()
+  }
+
+  gt(value: any): BooleanBuilder {
+    const __right = toExpr<NumberType>(value)
+    return new BooleanBuilder({__type: "comparison_op", __op: "gt", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  gte(value: any): BooleanBuilder {
+    const __right = toExpr<NumberType>(value)
+    return new BooleanBuilder({__type: "comparison_op", __op: "gte", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  lt(value: any): BooleanBuilder {
+    const __right = toExpr<NumberType>(value)
+    return new BooleanBuilder({__type: "comparison_op", __op: "lt", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  lte(value: any): BooleanBuilder {
+    const __right = toExpr<NumberType>(value)
+    return new BooleanBuilder({__type: "comparison_op", __op: "lte", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  minus(value: any): NumberBuilder {
+    const __right = toExpr<NumberType>(value)
+    return new NumberBuilder({__type: "math_op", __op: "minus", __left: this.__node, __right} as Expr<NumberType>)
+  }
+
+  plus(value: any): NumberBuilder {
+    const __right = toExpr<NumberType>(value)
+    return new NumberBuilder({__type: "math_op", __op: "plus", __left: this.__node, __right} as Expr<NumberType>)
+  }
+
+  desc(): DynamicBuilder {
+    // Check if this might be a string or number based on the node type
+    const type = getType(this.__node);
+    if (type.__kind === "string") {
+      return createDynamicBuilder({__type: "string_desc", __expr: this.__node} as Expr<StringType>)
+    }
+    return createDynamicBuilder({__type: "desc", __expr: this.__node} as Expr<NumberType>)
+  }
+
+  // === String operations ===
+  like(pattern: any): BooleanBuilder {
+    const __right = toExpr<StringType>(pattern);
+    return new BooleanBuilder({__type: "string_comparison", __op: "like", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  contains(value: any): BooleanBuilder {
+    const __right = toExpr<StringType>(value);
+    return new BooleanBuilder({__type: "string_comparison", __op: "contains", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  startsWith(value: any): BooleanBuilder {
+    const __right = toExpr<StringType>(value);
+    return new BooleanBuilder({__type: "string_comparison", __op: "starts_with", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  endsWith(value: any): BooleanBuilder {
+    const __right = toExpr<StringType>(value);
+    return new BooleanBuilder({__type: "string_comparison", __op: "ends_with", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  concat(value: any): StringBuilder {
+    const __right = toExpr<StringType>(value);
+    return new StringBuilder({__type: "concat", __left: this.__node, __right} as Expr<StringType>)
+  }
+
+  toLowerCase(): StringBuilder {
+    return new StringBuilder({__type: "lower", __expr: this.__node} as Expr<StringType>)
+  }
+
+  toUpperCase(): StringBuilder {
+    return new StringBuilder({__type: "upper", __expr: this.__node} as Expr<StringType>)
+  }
+
+  length(): NumberBuilder {
+    return new NumberBuilder({__type: "length", __expr: this.__node} as Expr<NumberType>)
+  }
+
+  // === Boolean operations ===
+  and(value: any): BooleanBuilder {
+    const __right = toExpr<BoolType>(value)
+    return new BooleanBuilder({__type: "logical_op", __op: "and", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  or(value: any): BooleanBuilder {
+    const __right = toExpr<BoolType>(value)
+    return new BooleanBuilder({__type: "logical_op", __op: "or", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  not(): BooleanBuilder {
+    return new BooleanBuilder({__type: "not", __expr: this.__node} as Expr<BoolType>)
+  }
+
+  // === Array operations ===
+  filter(fn: (val: any) => any): DynamicBuilder {
+    const __filter = withDynamicRowBuilder(this.__node, fn)
+    return createDynamicBuilder({ __type: "filter", __source: this.__node, __filter } as Expr<any>)
+  }
+
+  sort(fn: (val: any) => any): DynamicBuilder {
+    const __sort = withDynamicRowBuilder(this.__node, fn)
+    return createDynamicBuilder({ __type: "sort", __source: this.__node, __sort } as Expr<any>)
+  }
+
+  map<R>(fn: (val: any) => R): ArrayBuilder<InferType<R>> {
+    const __map = withDynamicRowBuilder(this.__node, fn)
+    return new ArrayBuilder({ __type: "map", __source: this.__node, __map } as unknown as Expr<ArrayTypeOf<InferType<R>>>)
+  }
+
+  limit(value: any): DynamicBuilder {
+    const __limit = toExpr<NumberType>(value);
+    return createDynamicBuilder({ __type: "limit", __source: this.__node, __limit } as Expr<any>)
+  }
+
+  offset(value: any): DynamicBuilder {
+    const __offset = toExpr<NumberType>(value);
+    return createDynamicBuilder({ __type: "offset", __source: this.__node, __offset } as Expr<any>)
+  }
+
+  count(): NumberBuilder {
+    return new NumberBuilder({__type: "count", __source: this.__node} as Expr<NumberType>)
+  }
+
+  average(): NumberBuilder {
+    return new NumberBuilder({ __type: 'number_window', __op: "average", __source: this.__node } as Expr<NumberType>);
+  }
+
+  sum(): NumberBuilder {
+    return new NumberBuilder({ __type: 'number_window', __op: "sum", __source: this.__node } as Expr<NumberType>);
+  }
+
+  max(): DynamicBuilder {
+    return createDynamicBuilder({ __type: 'scalar_window', __op: "max", __source: this.__node } as Expr<any>);
+  }
+
+  min(): DynamicBuilder {
+    return createDynamicBuilder({ __type: 'scalar_window', __op: "min", __source: this.__node } as Expr<any>);
+  }
+
+  first(): DynamicBuilder {
+    return createDynamicBuilder({ __type: 'first', __source: this.__node } as Expr<any>);
+  }
+
+  any(fn: (val: any) => any): BooleanBuilder {
+    return this.filter(fn).count().gt(0)
+  }
+
+  every(fn: (val: any) => any): BooleanBuilder {
+    return this.filter((val: any) => {
+      const result = fn(val);
+      const boolBuilder = result instanceof BooleanBuilder
+        ? result
+        : new BooleanBuilder(valueToExpr<BoolType>(result));
+      return boolBuilder.not();
+    }).count().eq(0)
+  }
+
+  union(other: any): DynamicBuilder {
+    const __right = other instanceof DynamicBuilder ? other.__node :
+                    other instanceof ArrayBuilder ? other.__node : other;
+    return createDynamicBuilder({__type: "set_op", __op: "union", __left: this.__node, __right } as Expr<any>)
+  }
+
+  intersection(other: any): DynamicBuilder {
+    const __right = other instanceof DynamicBuilder ? other.__node :
+                    other instanceof ArrayBuilder ? other.__node : other;
+    return createDynamicBuilder({__type: "set_op", __op: "intersect", __left: this.__node, __right } as Expr<any>)
+  }
+
+  difference(other: any): DynamicBuilder {
+    const __right = other instanceof DynamicBuilder ? other.__node :
+                    other instanceof ArrayBuilder ? other.__node : other;
+    return createDynamicBuilder({__type: "set_op", __op: "difference", __left: this.__node, __right } as Expr<any>)
+  }
+}
+
+// Create a DynamicBuilder with Proxy for field access
+function createDynamicBuilder(expr: Expr<any>): any {
+  const builder = new DynamicBuilder(expr);
+
+  return new Proxy(builder, {
+    get(target, prop, receiver) {
+      // Return known methods from DynamicBuilder
+      if (prop in target) {
+        const value = (target as any)[prop];
+        if (typeof value === 'function') {
+          return value.bind(target);
+        }
+        return value;
+      }
+
+      // Handle symbol properties
+      if (typeof prop === 'symbol') {
+        return Reflect.get(target, prop, receiver);
+      }
+
+      // Treat string properties as field access
+      if (typeof prop === 'string' && !prop.startsWith('_')) {
+        const fieldExpr: Expr<any> = {
+          __type: 'field',
+          __source: expr,
+          __field: prop
+        } as Expr<any>;
+        return createDynamicBuilder(fieldExpr);
+      }
+
+      return Reflect.get(target, prop, receiver);
+    }
+  });
+}
+
+// Helper for dynamic row iteration
+function withDynamicRowBuilder(source: Expr<any>, fn: (builder: any) => any): Expr<any> {
+  const rowExpr: Expr<any> = { __type: 'row', __source: source } as Expr<any>;
+  const rowBuilder = createDynamicBuilder(rowExpr);
+  const result = fn(rowBuilder);
+  return valueToExpr(result);
+}
+
 export function unreachable(val: never): never {
   throw new Error(`Unexpected val: ${val}`)
 }
@@ -748,7 +1016,23 @@ function typeFromName(name: TypeName): Type {
   }
 }
 
-export function Table<S extends SchemaSpec>(name: string, schema: S): ArrayBuilder<SchemaFromSpec<S>> {
+// Overload: with schema - full type safety
+export function Table<S extends SchemaSpec>(name: string, schema: S): ArrayBuilder<SchemaFromSpec<S>>
+// Overload: without schema - dynamic, no type safety
+export function Table(name: string): ReturnType<typeof createDynamicBuilder>
+// Implementation
+export function Table<S extends SchemaSpec>(name: string, schema?: S): any {
+  if (schema === undefined) {
+    // Schemaless table - use dynamic builder
+    const tableExpr: Expr<any> = {
+      __type: 'table',
+      __name: name,
+      __schema: { __kind: 'unknown_record' }
+    } as Expr<any>
+    return createDynamicBuilder(tableExpr)
+  }
+
+  // Schema-based table - existing behavior
   const __fields: Record<string, Type> = {}
   for (const [key, typeName] of Object.entries(schema)) {
     __fields[key] = typeFromName(typeName as TypeName)

@@ -170,7 +170,11 @@ function emitQuery(q: Query<Schema>, ctx: SqlGenCtx): { sql: string, alias: stri
       const alias = ctx.aliasGen.next().value;
       // Register this query's alias for row references
       ctx.aliasMap.set(q, alias);
-      const cols = Object.keys((q as any).__schema.__fields).map(col => `"${col}"`).join(", ");
+      const schema = (q as any).__schema;
+      // For schemaless tables (unknown_record), use SELECT *
+      const cols = schema.__kind === "unknown_record"
+        ? "*"
+        : Object.keys(schema.__fields).map((col: string) => `"${col}"`).join(", ");
       return {
         sql: `(SELECT ${cols} FROM "${(q as any).__name}") AS ${alias}`,
         alias
