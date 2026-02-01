@@ -81,97 +81,105 @@
  *
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Table = exports.unreachable = void 0;
+exports.Table = exports.unreachable = exports.exprType = void 0;
 const lodash_1 = require("lodash");
+// Helper to get __type from an expression
+function exprType(e) {
+    return e.__type;
+}
+exports.exprType = exprType;
 class ArrayBuilder {
-    constructor(node) {
-        this.node = node;
+    constructor(__node) {
+        this.__node = __node;
     }
     filter(fn) {
-        const filter = withRowBuilder(this.node, fn);
-        return new ArrayBuilder({ type: "filter", source: this.node, filter });
+        const __filter = withRowBuilder(this.__node, fn);
+        return new ArrayBuilder({ __type: "filter", __source: this.__node, __filter });
     }
     sort(fn) {
-        const sort = withRowBuilder(this.node, fn);
-        return new ArrayBuilder({ type: "sort", source: this.node, sort });
+        const __sort = withRowBuilder(this.__node, fn);
+        return new ArrayBuilder({ __type: "sort", __source: this.__node, __sort });
     }
     groupBy(fn) {
-        const key = withRowBuilder(this.node, fn);
-        return new ArrayBuilder({ type: "group_by", source: this.node, key });
+        const __key = withRowBuilder(this.__node, fn);
+        return new ArrayBuilder({ __type: "group_by", __source: this.__node, __key });
     }
     map(fn) {
-        const map = withRowBuilder(this.node, fn);
-        return new ArrayBuilder({ type: "map", source: this.node, map });
+        const __map = withRowBuilder(this.__node, fn);
+        return new ArrayBuilder({ __type: "map", __source: this.__node, __map });
     }
     limit(value) {
-        const limit = toExpr(value);
-        return new ArrayBuilder({ type: "limit", source: this.node, limit });
+        const __limit = toExpr(value);
+        return new ArrayBuilder({ __type: "limit", __source: this.__node, __limit });
     }
     offset(value) {
-        const offset = toExpr(value);
-        return new ArrayBuilder({ type: "offset", source: this.node, offset });
+        const __offset = toExpr(value);
+        return new ArrayBuilder({ __type: "offset", __source: this.__node, __offset });
     }
     union(other) {
-        const right = other instanceof ArrayBuilder ? other.node : other;
-        return new ArrayBuilder({ type: "set_op", op: "union", left: this.node, right });
+        const __right = other instanceof ArrayBuilder ? other.__node : other;
+        return new ArrayBuilder({ __type: "set_op", __op: "union", __left: this.__node, __right });
     }
     intersection(other) {
-        const right = other instanceof ArrayBuilder ? other.node : other;
-        return new ArrayBuilder({ type: "set_op", op: "intersect", left: this.node, right });
+        const __right = other instanceof ArrayBuilder ? other.__node : other;
+        return new ArrayBuilder({ __type: "set_op", __op: "intersect", __left: this.__node, __right });
     }
     difference(other) {
-        const right = other instanceof ArrayBuilder ? other.node : other;
-        return new ArrayBuilder({ type: "set_op", op: "difference", left: this.node, right });
+        const __right = other instanceof ArrayBuilder ? other.__node : other;
+        return new ArrayBuilder({ __type: "set_op", __op: "difference", __left: this.__node, __right });
     }
     count() {
-        const node = { type: "count", source: this.node };
-        return new NumberBuilder(node);
+        const __node = { __type: "count", __source: this.__node };
+        return new NumberBuilder(__node);
     }
     average() {
-        const type = getType(this.node);
-        if (type.type !== "array") {
+        const type = getType(this.__node);
+        if (type.__kind !== "array") {
             throw new Error("Cannot get average of non-array");
         }
-        else if (type.el.type !== "number") {
+        else if (type.__el.__kind !== "number") {
             throw new Error("Cannot get average of non-numeric-array");
         }
-        return new NumberBuilder({ type: 'number_window', op: "average", source: this.node });
+        return new NumberBuilder({ __type: 'number_window', __op: "average", __source: this.__node });
     }
     max() {
-        const type = getType(this.node);
-        if (type.type !== "array") {
+        const type = getType(this.__node);
+        if (type.__kind !== "array") {
             throw new Error("Cannot get max of non-array");
         }
-        else if (type.el.type !== "number" && type.el.type !== "string") {
+        else if (type.__el.__kind !== "number" && type.__el.__kind !== "string") {
             throw new Error("Cannot get max of non-numeric/string-array");
         }
-        if (type.el.type === "number") {
-            return new NumberBuilder({ type: 'scalar_window', op: "max", source: this.node });
+        if (type.__el.__kind === "number") {
+            return new NumberBuilder({ __type: 'scalar_window', __op: "max", __source: this.__node });
         }
-        else if (type.el.type === "string") {
-            return new StringBuilder({ type: 'scalar_window', op: "max", source: this.node });
+        else if (type.__el.__kind === "string") {
+            return new StringBuilder({ __type: 'scalar_window', __op: "max", __source: this.__node });
         }
         else {
             throw new Error("Cannot get max of non-numeric/string-array");
         }
     }
     min() {
-        const type = getType(this.node);
-        if (type.type !== "array") {
+        const type = getType(this.__node);
+        if (type.__kind !== "array") {
             throw new Error("Cannot get min of non-array");
         }
-        else if (type.el.type !== "number" && type.el.type !== "string") {
+        else if (type.__el.__kind !== "number" && type.__el.__kind !== "string") {
             throw new Error("Cannot get min of non-numeric/string-array");
         }
-        if (type.el.type === "number") {
-            return new NumberBuilder({ type: 'scalar_window', op: "min", source: this.node });
+        if (type.__el.__kind === "number") {
+            return new NumberBuilder({ __type: 'scalar_window', __op: "min", __source: this.__node });
         }
-        else if (type.el.type === "string") {
-            return new StringBuilder({ type: 'scalar_window', op: "min", source: this.node });
+        else if (type.__el.__kind === "string") {
+            return new StringBuilder({ __type: 'scalar_window', __op: "min", __source: this.__node });
         }
         else {
             throw new Error("Cannot get min of non-numeric/string-array");
         }
+    }
+    first() {
+        return this.limit(1);
     }
     // helpers
     any(fn) {
@@ -190,207 +198,208 @@ class ArrayBuilder {
 }
 function getLiteralType(val) {
     if (val === null) {
-        return { type: "null" };
+        return { __kind: "null" };
     }
     else if ((0, lodash_1.isNumber)(val)) {
-        return { type: "number" };
+        return { __kind: "number" };
     }
     else if ((0, lodash_1.isString)(val)) {
-        return { type: "string" };
+        return { __kind: "string" };
     }
     else if ((0, lodash_1.isBoolean)(val)) {
-        return { type: "bool" };
+        return { __kind: "bool" };
     }
     else if (val instanceof Array) {
-        return { type: "array", el: getLiteralType(val[0]) };
+        return { __kind: "array", __el: getLiteralType(val[0]) };
     }
     else if (val instanceof Object) {
-        const fields = (0, lodash_1.fromPairs)(Object.entries(val).map(([k, v]) => [k, getLiteralType(v)]));
-        return { type: "record", fields };
+        const __fields = (0, lodash_1.fromPairs)(Object.entries(val).map(([k, v]) => [k, getLiteralType(v)]));
+        return { __kind: "record", __fields };
     }
     else {
         throw new Error("Wat");
     }
 }
 function getType(expr) {
-    if (expr.type === "field") {
-        const recordType = getType(expr.source);
-        return recordType.fields[expr.field];
+    const t = expr.__type;
+    if (t === "field") {
+        const recordType = getType(expr.__source);
+        return recordType.__fields[expr.__field];
     }
-    else if (expr.type === "first") {
-        const arrayType = getType(expr.source);
-        return arrayType.el;
+    else if (t === "first") {
+        const arrayType = getType(expr.__source);
+        return arrayType.__el;
     }
-    else if (expr.type === "row") {
-        const arrayType = getType(expr.source);
-        return arrayType.el;
+    else if (t === "row") {
+        const arrayType = getType(expr.__source);
+        return arrayType.__el;
     }
-    else if (expr.type === "scalar_window") {
-        const arrayType = getType(expr.source);
-        return arrayType.el;
+    else if (t === "scalar_window") {
+        const arrayType = getType(expr.__source);
+        return arrayType.__el;
     }
-    else if (expr.type === "number") {
-        return { type: "number" };
+    else if (t === "number") {
+        return { __kind: "number" };
     }
-    else if (expr.type === "math_op") {
-        return { type: "number" };
+    else if (t === "math_op") {
+        return { __kind: "number" };
     }
-    else if (expr.type === "number_window") {
-        return { type: "number" };
+    else if (t === "number_window") {
+        return { __kind: "number" };
     }
-    else if (expr.type === "count") {
-        return { type: "number" };
+    else if (t === "count") {
+        return { __kind: "number" };
     }
-    else if (expr.type === "boolean") {
-        return { type: "bool" };
+    else if (t === "boolean") {
+        return { __kind: "bool" };
     }
-    else if (expr.type === "not") {
-        return { type: "bool" };
+    else if (t === "not") {
+        return { __kind: "bool" };
     }
-    else if (expr.type === "eq") {
-        return { type: "bool" };
+    else if (t === "eq") {
+        return { __kind: "bool" };
     }
-    else if (expr.type === "comparison_op") {
-        return { type: "bool" };
+    else if (t === "comparison_op") {
+        return { __kind: "bool" };
     }
-    else if (expr.type === "logical_op") {
-        return { type: "bool" };
+    else if (t === "logical_op") {
+        return { __kind: "bool" };
     }
-    else if (expr.type === "array") {
+    else if (t === "array") {
         // TODO: support unknown arrays;
-        return getLiteralType(expr.array);
+        return getLiteralType(expr.__array);
     }
-    else if (expr.type === "table") {
-        return { type: "array", el: expr.schema };
+    else if (t === "table") {
+        return { __kind: "array", __el: expr.__schema };
     }
-    else if (expr.type === "filter") {
-        return getType(expr.source);
+    else if (t === "filter") {
+        return getType(expr.__source);
     }
-    else if (expr.type === "sort") {
-        return getType(expr.source);
+    else if (t === "sort") {
+        return getType(expr.__source);
     }
-    else if (expr.type === "limit") {
-        return getType(expr.source);
+    else if (t === "limit") {
+        return getType(expr.__source);
     }
-    else if (expr.type === "offset") {
-        return getType(expr.source);
+    else if (t === "offset") {
+        return getType(expr.__source);
     }
-    else if (expr.type === "set_op") {
-        return getType(expr.right);
+    else if (t === "set_op") {
+        return getType(expr.__right);
     }
-    else if (expr.type === "map") {
-        const elType = getType(expr.map);
-        return { type: "array", el: elType };
+    else if (t === "map") {
+        const elType = getType(expr.__map);
+        return { __kind: "array", __el: elType };
     }
-    else if (expr.type === "flat_map") {
-        return getType(expr.flatMap);
+    else if (t === "flat_map") {
+        return getType(expr.__flatMap);
     }
-    else if (expr.type === "group_by") {
-        const valType = getType(expr.source);
-        const keyType = getType(expr.key);
-        return { type: "record", fields: { vals: valType, key: keyType } };
+    else if (t === "group_by") {
+        const valType = getType(expr.__source);
+        const keyType = getType(expr.__key);
+        return { __kind: "record", __fields: { vals: valType, key: keyType } };
     }
-    else if (expr.type === "string") {
-        return { type: "string" };
+    else if (t === "string") {
+        return { __kind: "string" };
     }
-    else if (expr.type === "null") {
-        return { type: "null" };
+    else if (t === "null") {
+        return { __kind: "null" };
     }
-    else if (expr.type === "record") {
-        const fields = {};
-        for (const [key, fieldExpr] of Object.entries(expr.fields)) {
-            fields[key] = getType(fieldExpr);
+    else if (t === "record") {
+        const __fields = {};
+        for (const [key, fieldExpr] of Object.entries(expr.__fields)) {
+            __fields[key] = getType(fieldExpr);
         }
-        return { type: "record", fields };
+        return { __kind: "record", __fields };
     }
     else {
-        return unreachable(expr);
+        throw new Error(`Unknown expr type: ${t}`);
     }
 }
 function createBuilder(expr, type) {
-    if (type.type === "null") {
+    if (type.__kind === "null") {
         return new NullBuilder(expr);
     }
-    else if (type.type === "bool") {
+    else if (type.__kind === "bool") {
         return new BooleanBuilder(expr);
     }
-    else if (type.type === "number") {
+    else if (type.__kind === "number") {
         return new NumberBuilder(expr);
     }
-    else if (type.type === "string") {
+    else if (type.__kind === "string") {
         return new StringBuilder(expr);
     }
-    else if (type.type === "array") {
+    else if (type.__kind === "array") {
         return new ArrayBuilder(expr);
     }
-    else if (type.type === "record") {
+    else if (type.__kind === "record") {
         const result = {};
-        for (const [fieldName, fieldType] of Object.entries(type.fields)) {
+        for (const [fieldName, fieldType] of Object.entries(type.__fields)) {
             const fieldExpr = {
-                type: 'field',
-                source: expr,
-                field: fieldName
+                __type: 'field',
+                __source: expr,
+                __field: fieldName
             };
             result[fieldName] = createBuilder(fieldExpr, fieldType);
         }
         return result;
     }
-    throw new Error(`Unknown type: ${type.type}`);
+    throw new Error(`Unknown type: ${type.__kind}`);
 }
 // Converts any ValueOf<T> (builder, expr, literal, or record object) to an Expr<T>
 function valueToExpr(val) {
     // Handle builder instances
     if (val instanceof ArrayBuilder) {
-        return val.node;
+        return val.__node;
     }
     else if (val instanceof NumberBuilder) {
-        return val.node;
+        return val.__node;
     }
     else if (val instanceof StringBuilder) {
-        return val.node;
+        return val.__node;
     }
     else if (val instanceof BooleanBuilder) {
-        return val.node;
+        return val.__node;
     }
     else if (val instanceof NullBuilder) {
-        return val.node;
+        return val.__node;
     }
     // Handle literals
     if (val === null) {
-        return { type: 'null' };
+        return { __type: 'null' };
     }
     else if (typeof val === 'number') {
-        return { type: 'number', number: val };
+        return { __type: 'number', __number: val };
     }
     else if (typeof val === 'string') {
-        return { type: 'string', string: val };
+        return { __type: 'string', __string: val };
     }
     else if (typeof val === 'boolean') {
-        return { type: 'boolean', boolean: val };
+        return { __type: 'boolean', __boolean: val };
     }
-    // Handle Expr objects (have __brand or type property)
-    if (typeof val === 'object' && val !== null && 'type' in val) {
+    // Handle Expr objects (have __brand or __type property)
+    if (typeof val === 'object' && val !== null && '__type' in val) {
         return val;
     }
     // Handle plain objects as record literals
     if (typeof val === 'object' && val !== null) {
-        const fields = {};
+        const __fields = {};
         for (const [key, value] of Object.entries(val)) {
-            fields[key] = valueToExpr(value);
+            __fields[key] = valueToExpr(value);
         }
-        return { type: 'record', fields };
+        return { __type: 'record', __fields };
     }
     throw new Error("Cannot convert value to expression");
 }
 function withRowBuilder(source, fn) {
     // Get the element type from the source array
     const sourceType = getType(source);
-    if (sourceType.type !== "array") {
+    if (sourceType.__kind !== "array") {
         throw new Error("withRowBuilder source must be an array");
     }
-    const elementType = sourceType.el;
+    const elementType = sourceType.__el;
     // Create a row expression representing a single element
-    const rowExpr = { type: 'row', source };
+    const rowExpr = { __type: 'row', __source: source };
     // Create the appropriate builder based on element type
     const rowBuilder = createBuilder(rowExpr, elementType);
     // Call the callback and convert result to expression
@@ -402,91 +411,91 @@ function toExpr(val) {
     if (val instanceof ArrayBuilder || val instanceof NumberBuilder ||
         val instanceof StringBuilder || val instanceof BooleanBuilder ||
         val instanceof NullBuilder) {
-        return val.node;
+        return val.__node;
     }
-    // If it's already an Expr (has __brand), return it
-    if (typeof val === 'object' && val !== null && '__brand' in val) {
+    // If it's already an Expr (has __brand or __type), return it
+    if (typeof val === 'object' && val !== null && ('__brand' in val || '__type' in val)) {
         return val;
     }
     // Convert literal to Expr
     if (val === null) {
-        return { type: 'null' };
+        return { __type: 'null' };
     }
     else if (typeof val === 'number') {
-        return { type: 'number', number: val };
+        return { __type: 'number', __number: val };
     }
     else if (typeof val === 'string') {
-        return { type: 'string', string: val };
+        return { __type: 'string', __string: val };
     }
     else if (typeof val === 'boolean') {
-        return { type: 'boolean', boolean: val };
+        return { __type: 'boolean', __boolean: val };
     }
     else if (Array.isArray(val)) {
-        return { type: 'array', array: val };
+        return { __type: 'array', __array: val };
     }
     // Fallback
     return val;
 }
 class NumberBuilder {
-    constructor(node) {
-        this.node = node;
+    constructor(__node) {
+        this.__node = __node;
     }
     eq(value) {
-        const right = value === null ? { type: 'null' } : toExpr(value);
-        return new BooleanBuilder({ type: "eq", left: this.node, right });
+        const __right = value === null ? { __type: 'null' } : toExpr(value);
+        return new BooleanBuilder({ __type: "eq", __left: this.__node, __right });
     }
     gt(value) {
-        const right = toExpr(value);
-        return new BooleanBuilder({ type: "comparison_op", op: "gt", left: this.node, right });
+        const __right = toExpr(value);
+        return new BooleanBuilder({ __type: "comparison_op", __op: "gt", __left: this.__node, __right });
     }
     lt(value) {
-        const right = toExpr(value);
-        return new BooleanBuilder({ type: "comparison_op", op: "lt", left: this.node, right });
+        const __right = toExpr(value);
+        return new BooleanBuilder({ __type: "comparison_op", __op: "lt", __left: this.__node, __right });
     }
     minus(value) {
-        const right = toExpr(value);
-        return new NumberBuilder({ type: "math_op", op: "minus", left: this.node, right });
+        const __right = toExpr(value);
+        return new NumberBuilder({ __type: "math_op", __op: "minus", __left: this.__node, __right });
     }
     plus(value) {
-        const right = toExpr(value);
-        return new NumberBuilder({ type: "math_op", op: "plus", left: this.node, right });
+        const __right = toExpr(value);
+        return new NumberBuilder({ __type: "math_op", __op: "plus", __left: this.__node, __right });
     }
 }
 class StringBuilder {
-    constructor(node) {
-        this.node = node;
+    constructor(__node) {
+        this.__node = __node;
     }
     eq(value) {
-        const right = value === null ? { type: 'null' } : toExpr(value);
-        return new BooleanBuilder({ type: "eq", left: this.node, right });
+        const __right = value === null ? { __type: 'null' } : toExpr(value);
+        return new BooleanBuilder({ __type: "eq", __left: this.__node, __right });
     }
 }
 class BooleanBuilder {
-    constructor(node) {
-        this.node = node;
+    constructor(__node) {
+        this.__node = __node;
     }
     eq(value) {
-        const right = value === null ? { type: 'null' } : toExpr(value);
-        return new BooleanBuilder({ type: "eq", left: this.node, right });
+        const __right = value === null ? { __type: 'null' } : toExpr(value);
+        return new BooleanBuilder({ __type: "eq", __left: this.__node, __right });
     }
     and(value) {
-        const right = toExpr(value);
-        return new BooleanBuilder({ type: "logical_op", op: "and", left: this.node, right });
+        const __right = toExpr(value);
+        return new BooleanBuilder({ __type: "logical_op", __op: "and", __left: this.__node, __right });
     }
     or(value) {
-        const right = toExpr(value);
-        return new BooleanBuilder({ type: "logical_op", op: "or", left: this.node, right });
+        const __right = toExpr(value);
+        return new BooleanBuilder({ __type: "logical_op", __op: "or", __left: this.__node, __right });
     }
     not() {
-        return new BooleanBuilder({ type: "not", expr: this.node });
+        return new BooleanBuilder({ __type: "not", __expr: this.__node });
     }
 }
 class NullBuilder {
-    constructor(node) {
-        this.node = node;
+    constructor(__node) {
+        this.__node = __node;
     }
     or(value) {
-        return new BooleanBuilder({ type: "eq", left: this.node, right: toExpr(value) });
+        return new BooleanBuilder({ __type: "eq", __left: this.__node, __right: toExpr(value) });
     }
 }
 function unreachable(val) {
@@ -495,24 +504,24 @@ function unreachable(val) {
 exports.unreachable = unreachable;
 function typeFromName(name) {
     switch (name) {
-        case 'string': return { type: 'string' };
-        case 'uuid': return { type: 'string' };
-        case 'number': return { type: 'number' };
-        case 'bool': return { type: 'bool' };
-        case 'null': return { type: 'null' };
+        case 'string': return { __kind: 'string' };
+        case 'uuid': return { __kind: 'string' };
+        case 'number': return { __kind: 'number' };
+        case 'bool': return { __kind: 'bool' };
+        case 'null': return { __kind: 'null' };
         default: return unreachable(name);
     }
 }
 function Table(name, schema) {
-    const fields = {};
+    const __fields = {};
     for (const [key, typeName] of Object.entries(schema)) {
-        fields[key] = typeFromName(typeName);
+        __fields[key] = typeFromName(typeName);
     }
-    const recordType = { type: 'record', fields };
+    const recordType = { __kind: 'record', __fields };
     const tableExpr = {
-        type: 'table',
-        name,
-        schema: recordType
+        __type: 'table',
+        __name: name,
+        __schema: recordType
     };
     return new ArrayBuilder(tableExpr);
 }

@@ -80,180 +80,181 @@
  *
  */
 type NumberType = {
-    type: "number";
+    __kind: "number";
 };
 type StringType = {
-    type: "string";
+    __kind: "string";
 };
 type NullType = {
-    type: "null";
+    __kind: "null";
 };
 type BoolType = {
-    type: "bool";
+    __kind: "bool";
 };
 type ScalarType = NumberType | StringType | NullType | BoolType;
 type ArrayType = {
-    type: "array";
-    el: Type;
+    __kind: "array";
+    __el: Type;
 };
 type RecordType = {
-    type: "record";
-    fields: {
+    __kind: "record";
+    __fields: {
         [col: string]: Type;
     };
 };
 type Type = ScalarType | ArrayType | RecordType;
 type ArrayTypeOf<T extends Readonly<Type>> = {
-    type: "array";
-    el: T;
+    __kind: "array";
+    __el: T;
 };
 type RecordTypeOf<T extends Record<string, Type>> = {
-    type: "record";
-    fields: {
+    __kind: "record";
+    __fields: {
         [K in keyof T]: T[K];
     };
 };
 export type Schema = RecordType;
 export type Query<S extends Schema> = Expr<ArrayTypeOf<S>>;
 type AnyExpr<T extends Type> = {
-    type: 'field';
-    source: Expr<RecordTypeOf<Record<string, T>>>;
-    field: string;
+    __type: 'field';
+    __source: Expr<RecordTypeOf<Record<string, T>>>;
+    __field: string;
 } | {
-    type: 'first';
-    source: Expr<ArrayTypeOf<T>>;
+    __type: 'first';
+    __source: Expr<ArrayTypeOf<T>>;
 } | {
-    type: 'row';
-    source: Expr<ArrayTypeOf<T>>;
+    __type: 'row';
+    __source: Expr<ArrayTypeOf<T>>;
 } | {
-    type: 'record';
-    fields: Record<string, Expr<any>>;
+    __type: 'record';
+    __fields: Record<string, Expr<any>>;
 };
 type ScalarWindowOperator = "max" | "min";
 type ScalarExpr<T extends Type> = never | {
-    type: 'scalar_window';
-    op: ScalarWindowOperator;
-    source: Expr<ArrayTypeOf<T>>;
+    __type: 'scalar_window';
+    __op: ScalarWindowOperator;
+    __source: Expr<ArrayTypeOf<T>>;
 };
 type MathOperator = 'plus' | 'minus';
 type NumberWindowOperator = "max" | "min" | "average";
 type NumberExpr = {
-    type: 'number';
-    number: number;
+    __type: 'number';
+    __number: number;
 } | {
-    type: "math_op";
-    op: MathOperator;
-    left: Expr<NumberType>;
-    right: Expr<NumberType>;
+    __type: "math_op";
+    __op: MathOperator;
+    __left: Expr<NumberType>;
+    __right: Expr<NumberType>;
 } | {
-    type: 'number_window';
-    op: NumberWindowOperator;
-    source: Expr<ArrayTypeOf<NumberType>>;
+    __type: 'number_window';
+    __op: NumberWindowOperator;
+    __source: Expr<ArrayTypeOf<NumberType>>;
 } | {
-    type: 'count';
-    source: Expr<ArrayType>;
+    __type: 'count';
+    __source: Expr<ArrayType>;
 };
 type LogicalOperator = 'and' | 'or';
 type ComparisonOperator = 'gt' | 'lt' | 'gte' | 'lte';
 type BooleanExpr = {
-    type: 'boolean';
-    boolean: boolean;
+    __type: 'boolean';
+    __boolean: boolean;
 } | {
-    type: 'not';
-    expr: Expr<BoolType>;
+    __type: 'not';
+    __expr: Expr<BoolType>;
 } | {
-    type: "eq";
-    left: Expr<ScalarType>;
-    right: Expr<ScalarType>;
+    __type: "eq";
+    __left: Expr<ScalarType>;
+    __right: Expr<ScalarType>;
 } | {
-    type: 'comparison_op';
-    op: ComparisonOperator;
-    left: Expr<NumberType>;
-    right: Expr<NumberType>;
+    __type: 'comparison_op';
+    __op: ComparisonOperator;
+    __left: Expr<NumberType>;
+    __right: Expr<NumberType>;
 } | {
-    type: 'logical_op';
-    op: LogicalOperator;
-    left: Expr<BoolType>;
-    right: Expr<BoolType>;
+    __type: 'logical_op';
+    __op: LogicalOperator;
+    __left: Expr<BoolType>;
+    __right: Expr<BoolType>;
 };
 type StringExpr = {
-    type: "string";
-    string: string;
+    __type: "string";
+    __string: string;
 };
 type NullExpr = {
-    type: "null";
+    __type: "null";
 };
 type ArrayExpr<T extends Type> = never | {
-    type: 'array';
-    array: Array<any>;
+    __type: 'array';
+    __array: Array<any>;
 } | {
-    type: 'table';
-    name: string;
-    schema: T;
+    __type: 'table';
+    __name: string;
+    __schema: T;
 } | {
-    type: 'filter';
-    source: Expr<ArrayTypeOf<T>>;
-    filter: Expr<BoolType>;
+    __type: 'filter';
+    __source: Expr<ArrayTypeOf<T>>;
+    __filter: Expr<BoolType>;
 } | {
-    type: 'sort';
-    source: Expr<ArrayTypeOf<T>>;
-    sort: Expr<Type>;
+    __type: 'sort';
+    __source: Expr<ArrayTypeOf<T>>;
+    __sort: Expr<Type>;
 } | {
-    type: 'limit';
-    source: Expr<ArrayTypeOf<T>>;
-    limit: Expr<NumberType>;
+    __type: 'limit';
+    __source: Expr<ArrayTypeOf<T>>;
+    __limit: Expr<NumberType>;
 } | {
-    type: 'offset';
-    source: Expr<ArrayTypeOf<T>>;
-    offset: Expr<NumberType>;
+    __type: 'offset';
+    __source: Expr<ArrayTypeOf<T>>;
+    __offset: Expr<NumberType>;
 } | {
-    type: 'set_op';
-    op: 'union' | 'intersect' | 'difference';
-    left: Expr<ArrayTypeOf<T>>;
-    right: Expr<ArrayTypeOf<T>>;
+    __type: 'set_op';
+    __op: 'union' | 'intersect' | 'difference';
+    __left: Expr<ArrayTypeOf<T>>;
+    __right: Expr<ArrayTypeOf<T>>;
 } | {
-    type: 'map';
-    source: Expr<ArrayTypeOf<Type>>;
-    map: Expr<T>;
+    __type: 'map';
+    __source: Expr<ArrayTypeOf<Type>>;
+    __map: Expr<T>;
 } | {
-    type: 'flat_map';
-    source: Expr<ArrayTypeOf<Type>>;
-    flatMap: Expr<ArrayTypeOf<T>>;
+    __type: 'flat_map';
+    __source: Expr<ArrayTypeOf<Type>>;
+    __flatMap: Expr<ArrayTypeOf<T>>;
 } | {
-    type: 'group_by';
-    source: Expr<ArrayTypeOf<Type>>;
-    key: Expr<Type>;
+    __type: 'group_by';
+    __source: Expr<ArrayTypeOf<Type>>;
+    __key: Expr<Type>;
 };
 export type Expr<T extends Type> = {
     __brand?: T;
 } & ((AnyExpr<T>) | (T extends ScalarType ? ScalarExpr<T> : never) | (T extends BoolType ? BooleanExpr : never) | (T extends NumberType ? NumberExpr : never) | (T extends StringType ? StringExpr : never) | (T extends NullType ? NullExpr : never) | (T extends ArrayTypeOf<infer ElemT> ? ElemT extends Type ? ArrayExpr<ElemT> : never : never));
+export declare function exprType(e: Expr<any>): string;
 type LiteralOf<T extends Type> = T extends {
-    type: "null";
+    __kind: "null";
 } ? null : T extends {
-    type: "string";
+    __kind: "string";
 } ? string : T extends {
-    type: "bool";
+    __kind: "bool";
 } ? boolean : T extends {
-    type: "number";
+    __kind: "number";
 } ? number : T extends {
-    type: "array";
-    el: Type;
-} ? Array<LiteralOf<T["el"]>> : T extends {
-    type: "record";
-    fields: {
+    __kind: "array";
+    __el: Type;
+} ? Array<LiteralOf<T["__el"]>> : T extends {
+    __kind: "record";
+    __fields: {
         [col: string]: Type;
     };
 } ? {
-    [K in keyof T["fields"]]: LiteralOf<T["fields"][K]>;
+    [K in keyof T["__fields"]]: LiteralOf<T["__fields"][K]>;
 } : never;
 export type ExprBuilder<T extends Type> = {
     __brand?: T;
 } & (T extends NullType ? NullBuilder : T extends BoolType ? BooleanBuilder : T extends NumberType ? NumberBuilder : T extends StringType ? StringBuilder : T extends ArrayTypeOf<infer ElemT> ? ElemT extends Type ? ArrayBuilder<ElemT> : never : T extends RecordType ? {
-    [Key in keyof T["fields"]]: ExprBuilder<T["fields"][Key]>;
+    [Key in keyof T["__fields"]]: ExprBuilder<T["__fields"][Key]>;
 } : never);
 declare class ArrayBuilder<T extends Type> {
-    node: Expr<ArrayTypeOf<T>>;
-    constructor(node: Expr<ArrayTypeOf<T>>);
+    __node: Expr<ArrayTypeOf<T>>;
+    constructor(__node: Expr<ArrayTypeOf<T>>);
     filter(fn: (val: ExprBuilder<T>) => ValueOf<BoolType>): ArrayBuilder<T>;
     sort(fn: (val: ExprBuilder<T>) => ValueOf<Type>): ArrayBuilder<T>;
     groupBy<K extends Type>(fn: (val: ExprBuilder<T>) => ValueOf<K>): ArrayBuilder<RecordTypeOf<{
@@ -270,6 +271,7 @@ declare class ArrayBuilder<T extends Type> {
     average(): NumberBuilder;
     max(): ExprBuilder<T>;
     min(): ExprBuilder<T>;
+    first(): ArrayBuilder<T>;
     any(fn: (val: ExprBuilder<T>) => ValueOf<BoolType>): BooleanBuilder;
     every(fn: (val: ExprBuilder<T>) => ValueOf<BoolType>): BooleanBuilder;
 }
@@ -284,8 +286,8 @@ type InferType<V> = V extends ArrayBuilder<infer E> ? ArrayTypeOf<E> : V extends
     [K in keyof V]: InferType<V[K]>;
 }> : Type;
 declare class NumberBuilder {
-    node: Expr<NumberType>;
-    constructor(node: Expr<NumberType>);
+    __node: Expr<NumberType>;
+    constructor(__node: Expr<NumberType>);
     eq(value: ValueOf<NumberType> | null): BooleanBuilder;
     gt(value: ValueOf<NumberType>): BooleanBuilder;
     lt(value: ValueOf<NumberType>): BooleanBuilder;
@@ -293,21 +295,21 @@ declare class NumberBuilder {
     plus(value: ValueOf<NumberType>): NumberBuilder;
 }
 declare class StringBuilder {
-    node: Expr<StringType>;
-    constructor(node: Expr<StringType>);
+    __node: Expr<StringType>;
+    constructor(__node: Expr<StringType>);
     eq(value: ValueOf<StringType> | null): BooleanBuilder;
 }
 declare class BooleanBuilder {
-    node: Expr<BoolType>;
-    constructor(node: Expr<BoolType>);
+    __node: Expr<BoolType>;
+    constructor(__node: Expr<BoolType>);
     eq(value: ValueOf<BoolType> | null): BooleanBuilder;
     and(value: ValueOf<BoolType>): BooleanBuilder;
     or(value: ValueOf<BoolType>): BooleanBuilder;
     not(): BooleanBuilder;
 }
 declare class NullBuilder {
-    node: Expr<NullType>;
-    constructor(node: Expr<NullType>);
+    __node: Expr<NullType>;
+    constructor(__node: Expr<NullType>);
     or(value: ValueOf<NullType>): BooleanBuilder;
 }
 export declare function unreachable(val: never): never;

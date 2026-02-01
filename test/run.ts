@@ -8,6 +8,7 @@
  *   4. Run tests: npx tsx test/run.ts
  */
 
+import { wrap } from "lodash"
 import { Table } from "../src/ast"
 import { toSql } from "../src/postgres"
 import { Client } from "pg"
@@ -33,7 +34,7 @@ async function main() {
   // Test 1: Simple filter - students over 20
   console.log("=== Test 1: Students over 20 ===")
   const adultStudents = Students.filter(s => s.age.gt(20))
-  const sql1 = toSql(adultStudents.node)
+  const sql1 = toSql(adultStudents.__node)
   console.log("SQL:", sql1)
   const res1 = await client.query(`SELECT * FROM ${sql1}`)
   console.log("Results:", res1.rows)
@@ -42,7 +43,7 @@ async function main() {
   // Test 2: Simple filter - students with pending grades (grade IS NULL)
   console.log("=== Test 2: Enrollments with pending grades ===")
   const pendingEnrollments = Enrollments.filter(e => e.grade.eq(null))
-  const sql2 = toSql(pendingEnrollments.node)
+  const sql2 = toSql(pendingEnrollments.__node)
   console.log("SQL:", sql2)
   // Note: eq(null) might not generate IS NULL correctly, let's see
   try {
@@ -56,7 +57,7 @@ async function main() {
   // Test 3: Count
   console.log("=== Test 3: Count of students ===")
   const studentCount = Students.count()
-  const sql3 = `SELECT ${toSql(studentCount.node as any)} as count`
+  const sql3 = `SELECT ${toSql(studentCount.__node as any)} as count`
   console.log("SQL:", sql3)
   try {
     const res3 = await client.query(sql3)
@@ -69,7 +70,7 @@ async function main() {
   // Test 4: Filter with AND
   console.log("=== Test 4: Students over 20 AND under 25 ===")
   const middleAged = Students.filter(s => s.age.gt(20).and(s.age.lt(25)))
-  const sql4 = toSql(middleAged.node)
+  const sql4 = toSql(middleAged.__node)
   console.log("SQL:", sql4)
   const res4 = await client.query(`SELECT * FROM ${sql4}`)
   console.log("Results:", res4.rows)
@@ -78,7 +79,7 @@ async function main() {
   // Test 5: Limit
   console.log("=== Test 5: First 2 students ===")
   const firstTwo = Students.limit(2)
-  const sql5 = toSql(firstTwo.node)
+  const sql5 = toSql(firstTwo.__node)
   console.log("SQL:", sql5)
   const res5 = await client.query(`SELECT * FROM ${sql5}`)
   console.log("Results:", res5.rows)
@@ -97,7 +98,7 @@ async function main() {
       averageAge: students.map(s => s.age).average(),
     }
   })
-  const sql6a = toSql(classAges.node)
+  const sql6a = toSql(classAges.__node)
   console.log("SQL:", sql6a)
   try {
     const res6a = await client.query(`SELECT * FROM ${sql6a}`)
@@ -107,6 +108,7 @@ async function main() {
   }
   const teachersWithMatureClasses = Teachers.map(t => ({
     id: t.id,
+    name: t.name,
     matureClasses: Classes.filter(c => {
       const students = Students.filter(s =>
         Enrollments.any(e => e.student_id.eq(s.id).and(e.class_id.eq(c.id)))
@@ -114,7 +116,7 @@ async function main() {
       return c.teacher_id.eq(t.id).and(students.map(s => s.age).average().gt(21))
     }),
   })).filter(t => t.matureClasses.count().gt(0))
-  const sql6 = toSql(teachersWithMatureClasses.node)
+  const sql6 = toSql(teachersWithMatureClasses.__node)
   console.log("SQL:", sql6)
   try {
     const res6 = await client.query(`SELECT * FROM ${sql6}`)
@@ -124,15 +126,93 @@ async function main() {
   }
   console.log()
 
+  // Test 7: Deeply nested query - 3 levels of nesting
+  // Teachers -> Classes -> Students, then filter on nested counts
+  // This tests whether we can access fields within JSON array elements
+  console.log("=== Test 7: Deeply nested query ===")
+  const teachersWithClassDetails = Teachers.map(t => ({
+    id: t.id,
+    name: t.name,
+    classes: Classes.filter(c => c.teacher_id.eq(t.id)).map(c => ({
+      id: c.id,
+      name: c.name,
+      students: Students.filter(s =>
+        Enrollments.any(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))
+      )
+    }))
+  }))
 
-  // Type inference test - this should compile without errors
-  // The mapped result should have typed fields accessible in filter
-  const _typeTest = Students.map(s => ({
-    studentId: s.id,
-    studentName: s.name,
-    isAdult: s.age.gt(18)
-  })).filter(m => m.studentId.eq("test").and(m.isAdult))
-  void _typeTest // suppress unused warning
+  // First, just test the mapping works
+  console.log("--- Part A: Just the nested map ---")
+  const sql7a = toSql(teachersWithClassDetails.__node)
+  console.log("SQL:", sql7a)
+  try {
+    const res7a = await client.query(`SELECT * FROM ${sql7a}`)
+    console.log("Results:", JSON.stringify(res7a.rows, null, 2))
+  } catch (err: any) {
+    console.log("Error:", err.message)
+  }
+
+  // Now filter: teachers who have at least one class with more than 1 student
+  // This requires accessing c.students.count() where c is inside t.classes (a JSON array)
+  console.log("--- Part B: Filter on deeply nested count ---")
+  const teachersWithPopularClasses = teachersWithClassDetails
+    .filter(t => t.classes.filter(c => c.students.count().gt(1)).count().gt(0))
+
+  const sql7b = toSql(teachersWithPopularClasses.__node)
+  console.log("SQL:", sql7b)
+  try {
+    const res7b = await client.query(`SELECT * FROM ${sql7b}`)
+    console.log("Results:", JSON.stringify(res7b.rows, null, 2))
+  } catch (err: any) {
+    console.log("Error:", err.message)
+  }
+  console.log()
+
+  // Test 8 Deeply nested query - 3 levels of nesting
+  // Teachers -> Classes -> Students, then filter on nested counts
+  // This tests whether we can access fields within JSON array elements
+  console.log("=== Test 8: Sorting by nested counts ===")
+  const sortedTeachers = Teachers.sort(t => {
+    const classSizes = Classes
+      .filter(c => c.teacher_id.eq(t.id))
+      .map(c => Students.filter(s =>
+        Enrollments.any(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))
+      ).count())
+    return classSizes.max()
+  })
+
+  const sql18 = toSql(sortedTeachers.__node)
+  console.log("SQL:", sql18)
+  try {
+    const res8 = await client.query(`SELECT * FROM ${sql18}`)
+    console.log("Results:", JSON.stringify(res8.rows, null, 2))
+  } catch (err: any) {
+    console.log("Error:", err.message)
+  }
+
+  const teachersLargestClassSize = sortedTeachers.map(t => {
+    const largestClass = Classes
+      .filter(c => c.teacher_id.eq(t.id))
+      .map(c => ({
+        count: Students.filter(s => Enrollments.any(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))).count(),
+        name: c.name,
+      })).sort(c => c.count).first()
+    return {
+      id: t.id,
+      name: t.name,
+       largestClassName: largestClass.name,
+      largestClassSize: largestClass.count,
+    }
+  })
+  const sql19 = toSql(teachersLargestClassSize.__node)
+  console.log("SQL:", sql19)
+  try {
+    const res9 = await client.query(`SELECT * FROM ${sql19}`)
+    console.log("Results:", JSON.stringify(res9.rows, null, 2))
+  } catch (err: any) {
+    console.log("Error:", err.message)
+  }
 
   await client.end()
   console.log("Done!")

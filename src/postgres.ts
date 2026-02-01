@@ -1,5 +1,5 @@
 import type { Query, Schema, Expr } from "./ast"
-import { unreachable } from "./ast"
+import { unreachable, exprType } from "./ast"
 
 // --- ALIAS UTILS ---
 function* aliasGenerator() {
@@ -16,10 +16,11 @@ const QUERY_TYPES = new Set([
 
 export function toSql(q: Expr<any>): string {
   let aliasGen = aliasGenerator();
-  const ctx: SqlGenCtx = { aliasGen, depth: 0, aliasMap: new Map() };
+  const ctx: SqlGenCtx = { aliasGen, depth: 0, aliasMap: new Map(), subqueryFields: new Map() };
 
   // Route to appropriate emitter based on expression type
-  if (QUERY_TYPES.has(q.type)) {
+  const t = exprType(q);
+  if (QUERY_TYPES.has(t)) {
     const { sql } = emitQuery(q as Query<Schema>, ctx);
     return sql;
   } else {
@@ -33,44 +34,173 @@ type SqlGenCtx = {
   aliasGen: Generator<string>,
   depth: number,
   // Maps row source expressions to their SQL aliases (for closure scoping)
-  aliasMap: Map<Expr<any>, string>
+  aliasMap: Map<Expr<any>, string>,
+  // Maps field expressions to their source queries (for deferred aggregation)
+  // Key is the field expr, value is the original query expr
+  subqueryFields: Map<Expr<any>, Expr<any>>
 };
 
+// Emit a predicate expression for JSON element access
+// Used when filtering over jsonb_array_elements
+function emitJsonPredicate(e: Expr<any>, jsonAlias: string, ctx: SqlGenCtx): string {
+  const t = exprType(e);
+  switch (t) {
+    case "field": {
+      // Access JSON field: jsonAlias->>'fieldName' for scalars, jsonAlias->'fieldName' for nested
+      const fieldName = (e as any).__field;
+      // For nested arrays (like 'students'), use -> to keep as JSON
+      return `${jsonAlias}->'${fieldName}'`;
+    }
+    case "count": {
+      // Count of a JSON array field
+      const source = (e as any).__source;
+      if (exprType(source) === "field") {
+        const fieldAccess = emitJsonPredicate(source, jsonAlias, ctx);
+        return `COALESCE(json_array_length(${fieldAccess}), 0)`;
+      }
+      // Fallback to regular count
+      const { sql: srcSql } = emitQuery(source as Query<Schema>, ctx);
+      return `(SELECT COUNT(*) FROM ${srcSql})`;
+    }
+    case "comparison_op": {
+      const op = (e as any).__op;
+      const left = (e as any).__left;
+      const right = (e as any).__right;
+      const leftSql = emitJsonPredicate(left, jsonAlias, ctx);
+      const rightSql = emitJsonPredicate(right, jsonAlias, ctx);
+      switch (op) {
+        case "gt": return `(${leftSql} > ${rightSql})`;
+        case "lt": return `(${leftSql} < ${rightSql})`;
+        case "gte": return `(${leftSql} >= ${rightSql})`;
+        case "lte": return `(${leftSql} <= ${rightSql})`;
+        default: return `(${leftSql} = ${rightSql})`;
+      }
+    }
+    case "logical_op": {
+      const op = (e as any).__op;
+      const left = (e as any).__left;
+      const right = (e as any).__right;
+      const opStr = op === "and" ? " AND " : " OR ";
+      return `(${emitJsonPredicate(left, jsonAlias, ctx)}${opStr}${emitJsonPredicate(right, jsonAlias, ctx)})`;
+    }
+    case "number":
+      return String((e as any).__number);
+    case "string":
+      return `'${(e as any).__string.replace(/'/g, "''")}'`;
+    case "boolean":
+      return (e as any).__boolean ? 'TRUE' : 'FALSE';
+    case "row":
+      // Reference to the JSON element itself
+      return jsonAlias;
+    default:
+      // Fallback to regular expression emission
+      return emitExpr(e, jsonAlias, ctx);
+  }
+}
+
+// Resolve a field expression to its original source query by traversing the AST
+// e.g., t.classes where t is from Teachers.map(t => ({classes: Classes.filter(...)}))
+// should resolve to the Classes.filter(...) expression
+function resolveFieldToQuery(e: Expr<any>): Expr<any> | null {
+  if (exprType(e) !== "field") return null;
+
+  const fieldExpr = e as { __type: "field"; __source: Expr<any>; __field: string };
+  const rowExpr = fieldExpr.__source;
+
+  if (exprType(rowExpr) !== "row") return null;
+
+  const rowSource = (rowExpr as { __type: "row"; __source: Expr<any> }).__source;
+
+  // The row source should be a map expression with a record
+  if (exprType(rowSource) !== "map") return null;
+
+  const mapExpr = rowSource as { __type: "map"; __source: Expr<any>; __map: Expr<any> };
+  const mapResult = mapExpr.__map;
+
+  // The map result should be a record with the field we're looking for
+  if (exprType(mapResult) !== "record") return null;
+
+  const recordExpr = mapResult as { __type: "record"; __fields: Record<string, Expr<any>> };
+  const fieldValue = recordExpr.__fields[fieldExpr.__field];
+
+  if (!fieldValue) return null;
+
+  return fieldValue;
+}
+
 function emitQuery(q: Query<Schema>, ctx: SqlGenCtx): { sql: string, alias: string } {
-  switch (q.type) {
+  const t = exprType(q);
+
+  // Handle filter/map whose source is a field (JSON array) - use jsonb_array_elements
+  const sourceField = (q as any).__source;
+  if (sourceField && exprType(sourceField) === "field") {
+    if (t === "filter") {
+      // Filter on a JSON array field: iterate with jsonb_array_elements
+      const alias = ctx.aliasGen.next().value;
+      const jsonAlias = ctx.aliasGen.next().value;
+
+      // Get the outer table alias from the field's row source
+      const rowExpr = sourceField.__source;
+      let outerAlias = alias;
+      if (rowExpr && exprType(rowExpr) === "row") {
+        const rowSource = rowExpr.__source as Expr<any>;
+        outerAlias = ctx.aliasMap.get(rowSource) ?? alias;
+      }
+
+      // Emit the field access using the outer alias
+      const fieldName = sourceField.__field;
+      const fieldSql = `${outerAlias}."${fieldName}"`;
+
+      // Register this query so nested field accesses work
+      ctx.aliasMap.set(q, jsonAlias);
+
+      // For the filter predicate, emit with JSON field access
+      const filterExpr = (q as any).__filter;
+      const filterSql = emitJsonPredicate(filterExpr, jsonAlias, ctx);
+
+      return {
+        sql: `(SELECT json_agg(${jsonAlias}) FROM json_array_elements(${fieldSql}) AS ${jsonAlias} WHERE ${filterSql}) AS ${alias}`,
+        alias
+      };
+    }
+  }
+
+  switch (t) {
     case "table": {
       const alias = ctx.aliasGen.next().value;
       // Register this query's alias for row references
       ctx.aliasMap.set(q, alias);
-      const cols = Object.keys(q.schema.fields).map(col => `"${col}"`).join(", ");
+      const cols = Object.keys((q as any).__schema.__fields).map(col => `"${col}"`).join(", ");
       return {
-        sql: `(SELECT ${cols} FROM "${q.name}") AS ${alias}`,
+        sql: `(SELECT ${cols} FROM "${(q as any).__name}") AS ${alias}`,
         alias
       };
     }
     case "filter": {
-      const { sql: sourceSql, alias } = emitQuery(q.source as Query<Schema>, ctx);
+      const { sql: sourceSql, alias } = emitQuery((q as any).__source as Query<Schema>, ctx);
       // Register this query's alias for row references
       ctx.aliasMap.set(q, alias);
-      const exprSql = emitExpr(q.filter, alias, ctx);
+      const exprSql = emitExpr((q as any).__filter, alias, ctx);
       return {
         sql: `(SELECT * FROM ${sourceSql} WHERE ${exprSql}) AS ${alias}`,
         alias
       };
     }
     case "map": {
-      const { sql: sourceSql, alias: srcAlias } = emitQuery(q.source as Query<Schema>, ctx);
-      const mapExpr = q.map;
+      const { sql: sourceSql, alias: srcAlias } = emitQuery((q as any).__source as Query<Schema>, ctx);
+      const mapExpr = (q as any).__map;
 
       // Identity map - just pass through
-      if (mapExpr.type === "row") {
+      if (exprType(mapExpr) === "row") {
+        ctx.aliasMap.set(q, srcAlias);
         return { sql: sourceSql, alias: srcAlias };
       }
 
       // Record construction - emit each field with its name
-      if (mapExpr.type === "record") {
+      if (exprType(mapExpr) === "record") {
         const fields = emitRecordFields(mapExpr, srcAlias, ctx);
         const alias = ctx.aliasGen.next().value;
+        ctx.aliasMap.set(q, alias);
         return {
           sql: `(SELECT ${fields} FROM ${sourceSql}) AS ${alias}`,
           alias
@@ -80,56 +210,69 @@ function emitQuery(q: Query<Schema>, ctx: SqlGenCtx): { sql: string, alias: stri
       // Scalar map - alias as "value" for aggregation compatibility
       const scalarExpr = emitExpr(mapExpr, srcAlias, ctx);
       const alias = ctx.aliasGen.next().value;
+      ctx.aliasMap.set(q, alias);
       return {
         sql: `(SELECT ${scalarExpr} AS value FROM ${sourceSql}) AS ${alias}`,
         alias
       };
     }
     case "sort": {
-      const { sql: srcSql, alias } = emitQuery(q.source as Query<Schema>, ctx);
-      const orderingSql = emitExpr(q.sort, alias, ctx);
+      const { sql: srcSql, alias } = emitQuery((q as any).__source as Query<Schema>, ctx);
+      // Register this query's alias for row references
+      ctx.aliasMap.set(q, alias);
+      const orderingSql = emitExpr((q as any).__sort, alias, ctx);
       return {
         sql: `(SELECT * FROM ${srcSql} ORDER BY ${orderingSql}) AS ${alias}`,
         alias
       };
     }
     case "limit": {
-      const { sql: srcSql, alias } = emitQuery(q.source as Query<Schema>, ctx);
-      const limitSql = emitExpr(q.limit as Expr<any>, alias, ctx);
+      const { sql: srcSql, alias } = emitQuery((q as any).__source as Query<Schema>, ctx);
+      // Register this query's alias for row references
+      ctx.aliasMap.set(q, alias);
+      const limitSql = emitExpr((q as any).__limit as Expr<any>, alias, ctx);
       return {
         sql: `(SELECT * FROM ${srcSql} LIMIT ${limitSql}) AS ${alias}`,
         alias
       };
     }
     case "offset": {
-      const { sql: srcSql, alias } = emitQuery(q.source as Query<Schema>, ctx);
-      const offsetSql = emitExpr(q.offset as Expr<any>, alias, ctx);
+      const { sql: srcSql, alias } = emitQuery((q as any).__source as Query<Schema>, ctx);
+      // Register this query's alias for row references
+      ctx.aliasMap.set(q, alias);
+      const offsetSql = emitExpr((q as any).__offset as Expr<any>, alias, ctx);
       return {
         sql: `(SELECT * FROM ${srcSql} OFFSET ${offsetSql}) AS ${alias}`,
         alias
       };
     }
     case "set_op": {
-      const { sql: leftSql, alias: leftAlias } = emitQuery(q.left as Query<Schema>, ctx);
-      const { sql: rightSql } = emitQuery(q.right as Query<Schema>, ctx);
-      const op = q.op === "difference" ? "EXCEPT" : q.op.toUpperCase();
+      const { sql: leftSql, alias: leftAlias } = emitQuery((q as any).__left as Query<Schema>, ctx);
+      const { sql: rightSql } = emitQuery((q as any).__right as Query<Schema>, ctx);
+      // Register this query's alias for row references
+      ctx.aliasMap.set(q, leftAlias);
+      const op = (q as any).__op === "difference" ? "EXCEPT" : (q as any).__op.toUpperCase();
       return {
         sql: `(${leftSql} ${op} ${rightSql})`,
         alias: leftAlias
       };
     }
     case "group_by": {
-      const { sql: srcSql, alias } = emitQuery(q.source as Query<Schema>, ctx);
-      const keyExpr = emitExpr(q.key, alias, ctx);
+      const { sql: srcSql, alias } = emitQuery((q as any).__source as Query<Schema>, ctx);
+      // Register this query's alias for row references
+      ctx.aliasMap.set(q, alias);
+      const keyExpr = emitExpr((q as any).__key, alias, ctx);
       return {
         sql: `(SELECT ${keyExpr} AS key, json_agg(${alias}) AS vals FROM ${srcSql} GROUP BY ${keyExpr}) AS ${alias}`,
         alias
       };
     }
     case "flat_map": {
-      const { sql: sourceSql, alias: srcAlias } = emitQuery(q.source as Query<Schema>, ctx);
-      const { sql: flatMapSql, alias: fmAlias } = emitQuery(q.flatMap as Query<Schema>, ctx);
+      const { sql: sourceSql, alias: srcAlias } = emitQuery((q as any).__source as Query<Schema>, ctx);
+      const { sql: flatMapSql, alias: fmAlias } = emitQuery((q as any).__flatMap as Query<Schema>, ctx);
       const alias = ctx.aliasGen.next().value;
+      // Register this query's alias for row references
+      ctx.aliasMap.set(q, alias);
       return {
         sql: `(SELECT ${fmAlias}.* FROM ${sourceSql}, LATERAL ${flatMapSql}) AS ${alias}`,
         alias
@@ -138,33 +281,37 @@ function emitQuery(q: Query<Schema>, ctx: SqlGenCtx): { sql: string, alias: stri
     case "array": {
       // Literal array - emit as VALUES
       const alias = ctx.aliasGen.next().value;
-      if (q.array.length === 0) {
+      // Register this query's alias for row references
+      ctx.aliasMap.set(q, alias);
+      const arr = (q as any).__array;
+      if (arr.length === 0) {
         return {
           sql: `(SELECT * FROM (SELECT NULL) AS empty WHERE FALSE) AS ${alias}`,
           alias
         };
       }
-      const values = q.array.map(v => `(${emitLiteral(v)})`).join(", ");
+      const values = arr.map((v: any) => `(${emitLiteral(v)})`).join(", ");
       return {
         sql: `(SELECT * FROM (VALUES ${values}) AS t(value)) AS ${alias}`,
         alias
       };
     }
     default:
-      throw new Error(`Unknown query type: ${(q as any).type}`);
+      throw new Error(`Unknown query type: ${t}`);
   }
 }
 
 function emitRecordFields(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
+  const t = exprType(e);
   // Handle different expression types that could produce record-like output
-  if (e.type === "field") {
+  if (t === "field") {
     // Single field access
-    return `${tableAlias}."${e.field}"`;
+    return `${tableAlias}."${(e as any).__field}"`;
   }
 
-  if (e.type === "record") {
+  if (t === "record") {
     // Record literal - emit as comma-separated "expr AS name" pairs
-    return Object.entries(e.fields)
+    return Object.entries((e as any).__fields)
       .map(([name, expr]) => `${emitExpr(expr as Expr<any>, tableAlias, ctx)} AS "${name}"`)
       .join(", ");
   }
@@ -174,46 +321,59 @@ function emitRecordFields(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): str
 }
 
 function emitExpr(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
-  switch (e.type) {
+  const t = exprType(e);
+  switch (t) {
     case "field": {
-      // Look up the alias for the field's source (a row's source array)
-      const rowSource = e.source;
-      if (rowSource.type === "row") {
-        const arraySource = rowSource.source;
+      // Look up the alias for the field's source
+      const fieldSource = (e as any).__source;
+      const fieldName = (e as any).__field;
+      const sourceType = exprType(fieldSource);
+
+      if (sourceType === "row") {
+        const arraySource = fieldSource.__source;
         const alias = ctx.aliasMap.get(arraySource) ?? tableAlias;
-        return `${alias}."${e.field}"`;
+        return `${alias}."${fieldName}"`;
       }
-      return `${tableAlias}."${e.field}"`;
+
+      if (sourceType === "first") {
+        // Field access on a first() result - emit as scalar subquery
+        const { sql: srcSql, alias: srcAlias } = emitQuery(fieldSource.__source as Query<Schema>, ctx);
+        return `(SELECT ${srcAlias}."${fieldName}" FROM ${srcSql} LIMIT 1)`;
+      }
+
+      return `${tableAlias}."${fieldName}"`;
     }
     case "row": {
       // Row reference - look up the alias for the row's source
-      const alias = ctx.aliasMap.get(e.source as Expr<any>) ?? tableAlias;
+      const alias = ctx.aliasMap.get((e as any).__source as Expr<any>) ?? tableAlias;
       return `${alias}.*`;
     }
     case "first": {
-      const srcSql = emitExpr(e.source as Expr<any>, tableAlias, ctx);
-      return `(SELECT * FROM ${srcSql} LIMIT 1)`;
+      const { sql: srcSql, alias: srcAlias } = emitQuery((e as any).__source as Query<Schema>, ctx);
+      return `(SELECT row_to_json(${srcAlias}) FROM ${srcSql} LIMIT 1)`;
     }
     case "number":
-      return String(e.number);
+      return String((e as any).__number);
     case "string":
-      return `'${e.string.replace(/'/g, "''")}'`;
+      return `'${(e as any).__string.replace(/'/g, "''")}'`;
     case "boolean":
-      return e.boolean ? 'TRUE' : 'FALSE';
+      return (e as any).__boolean ? 'TRUE' : 'FALSE';
     case "null":
       return 'NULL';
     case "eq": {
       // Handle NULL comparisons specially - SQL uses IS NULL, not = NULL
-      if (e.right.type === "null") {
-        return `(${emitExpr(e.left, tableAlias, ctx)} IS NULL)`;
+      if (exprType((e as any).__right) === "null") {
+        return `(${emitExpr((e as any).__left, tableAlias, ctx)} IS NULL)`;
       }
-      if (e.left.type === "null") {
-        return `(${emitExpr(e.right, tableAlias, ctx)} IS NULL)`;
+      if (exprType((e as any).__left) === "null") {
+        return `(${emitExpr((e as any).__right, tableAlias, ctx)} IS NULL)`;
       }
-      return `(${emitExpr(e.left, tableAlias, ctx)} = ${emitExpr(e.right, tableAlias, ctx)})`;
+      return `(${emitExpr((e as any).__left, tableAlias, ctx)} = ${emitExpr((e as any).__right, tableAlias, ctx)})`;
     }
     case "math_op": {
-      const { op, left, right } = e;
+      const op = (e as any).__op as 'plus' | 'minus';
+      const left = (e as any).__left;
+      const right = (e as any).__right;
       switch (op) {
         case "plus": return `(${emitExpr(left, tableAlias, ctx)} + ${emitExpr(right, tableAlias, ctx)})`;
         case "minus": return `(${emitExpr(left, tableAlias, ctx)} - ${emitExpr(right, tableAlias, ctx)})`;
@@ -221,7 +381,9 @@ function emitExpr(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
       }
     }
     case "comparison_op": {
-      const { op, left, right } = e;
+      const op = (e as any).__op as 'gt' | 'lt' | 'gte' | 'lte';
+      const left = (e as any).__left;
+      const right = (e as any).__right;
       switch (op) {
         case "gt": return `(${emitExpr(left, tableAlias, ctx)} > ${emitExpr(right, tableAlias, ctx)})`;
         case "lt": return `(${emitExpr(left, tableAlias, ctx)} < ${emitExpr(right, tableAlias, ctx)})`;
@@ -230,22 +392,25 @@ function emitExpr(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
         default: return unreachable(op);
       }
     }
-    case "logical_op":
-      const op = e.op === "and" ? " AND " : " OR ";
-      return `(${emitExpr(e.left, tableAlias, ctx)}${op}${emitExpr(e.right, tableAlias, ctx)})`;
+    case "logical_op": {
+      const op = (e as any).__op === "and" ? " AND " : " OR ";
+      return `(${emitExpr((e as any).__left, tableAlias, ctx)}${op}${emitExpr((e as any).__right, tableAlias, ctx)})`;
+    }
     case "not":
-      return `(NOT ${emitExpr(e.expr, tableAlias, ctx)})`;
+      return `(NOT ${emitExpr((e as any).__expr, tableAlias, ctx)})`;
     case "count": {
       // If source is a field (JSON array from subquery), use json_array_length
-      if (e.source.type === "field" || e.source.type === "row") {
-        const fieldSql = emitExpr(e.source as Expr<any>, tableAlias, ctx);
+      const sourceType = exprType((e as any).__source);
+      if (sourceType === "field" || sourceType === "row") {
+        const fieldSql = emitExpr((e as any).__source as Expr<any>, tableAlias, ctx);
         return `COALESCE(json_array_length(${fieldSql}), 0)`;
       }
-      const { sql: srcSql } = emitQuery(e.source as Query<Schema>, ctx);
+      const { sql: srcSql } = emitQuery((e as any).__source as Query<Schema>, ctx);
       return `(SELECT COUNT(*) FROM ${srcSql})`;
     }
     case "number_window": {
-      const { op, source } = e;
+      const op = (e as any).__op as 'average' | 'max' | 'min';
+      const source = (e as any).__source;
       const { sql: srcSql, alias: srcAlias } = emitQuery(source as unknown as Query<Schema>, ctx);
       switch (op) {
         case "average": return `(SELECT AVG(${srcAlias}.value) FROM ${srcSql})`;
@@ -255,7 +420,8 @@ function emitExpr(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
       }
     }
     case "scalar_window": {
-      const { op, source } = e;
+      const op = (e as any).__op as 'max' | 'min';
+      const source = (e as any).__source;
       const { sql: srcSql, alias: srcAlias } = emitQuery(source as unknown as Query<Schema>, ctx);
       switch (op) {
         case "max": return `(SELECT MAX(${srcAlias}.value) FROM ${srcSql})`;
@@ -266,7 +432,7 @@ function emitExpr(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
     // Handle query types that can appear as expressions (table-valued)
     case "record": {
       // Record literal - emit as json_build_object
-      const pairs = Object.entries(e.fields)
+      const pairs = Object.entries((e as any).__fields)
         .map(([name, expr]) => `'${name}', ${emitExpr(expr as Expr<any>, tableAlias, ctx)}`)
         .join(", ");
       return `json_build_object(${pairs})`;
@@ -286,7 +452,7 @@ function emitExpr(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
       return `(SELECT COALESCE(json_agg(${srcAlias}), '[]') FROM ${srcSql})`;
     }
     default:
-      throw new Error(`Unknown expr type: ${(e as any).type}`);
+      throw new Error(`Unknown expr type: ${t}`);
   }
 }
 
