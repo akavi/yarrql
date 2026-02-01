@@ -370,6 +370,38 @@ function emitExpr(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
       }
       return `(${emitExpr((e as any).__left, tableAlias, ctx)} = ${emitExpr((e as any).__right, tableAlias, ctx)})`;
     }
+    case "string_comparison": {
+      const op = (e as any).__op as 'like' | 'contains' | 'starts_with' | 'ends_with';
+      const left = emitExpr((e as any).__left, tableAlias, ctx);
+      const right = (e as any).__right;
+      switch (op) {
+        case "like":
+          return `(${left} LIKE ${emitExpr(right, tableAlias, ctx)})`;
+        case "contains":
+          return `(${left} LIKE '%' || ${emitExpr(right, tableAlias, ctx)} || '%')`;
+        case "starts_with":
+          return `(${left} LIKE ${emitExpr(right, tableAlias, ctx)} || '%')`;
+        case "ends_with":
+          return `(${left} LIKE '%' || ${emitExpr(right, tableAlias, ctx)})`;
+        default:
+          return unreachable(op);
+      }
+    }
+    case "concat": {
+      const left = emitExpr((e as any).__left, tableAlias, ctx);
+      const right = emitExpr((e as any).__right, tableAlias, ctx);
+      return `(${left} || ${right})`;
+    }
+    case "lower":
+      return `LOWER(${emitExpr((e as any).__expr, tableAlias, ctx)})`;
+    case "upper":
+      return `UPPER(${emitExpr((e as any).__expr, tableAlias, ctx)})`;
+    case "length":
+      return `LENGTH(${emitExpr((e as any).__expr, tableAlias, ctx)})`;
+    case "string_desc": {
+      const innerSql = emitExpr((e as any).__expr, tableAlias, ctx);
+      return `${innerSql} DESC`;
+    }
     case "math_op": {
       const op = (e as any).__op as 'plus' | 'minus';
       const left = (e as any).__left;
@@ -408,14 +440,19 @@ function emitExpr(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
       const { sql: srcSql } = emitQuery((e as any).__source as Query<Schema>, ctx);
       return `(SELECT COUNT(*) FROM ${srcSql})`;
     }
+    case "desc": {
+      const innerSql = emitExpr((e as any).__expr, tableAlias, ctx);
+      return `${innerSql} DESC`;
+    }
     case "number_window": {
-      const op = (e as any).__op as 'average' | 'max' | 'min';
+      const op = (e as any).__op as 'average' | 'max' | 'min' | 'sum';
       const source = (e as any).__source;
       const { sql: srcSql, alias: srcAlias } = emitQuery(source as unknown as Query<Schema>, ctx);
       switch (op) {
         case "average": return `(SELECT AVG(${srcAlias}.value) FROM ${srcSql})`;
         case "max": return `(SELECT MAX(${srcAlias}.value) FROM ${srcSql})`;
         case "min": return `(SELECT MIN(${srcAlias}.value) FROM ${srcSql})`;
+        case "sum": return `(SELECT COALESCE(SUM(${srcAlias}.value), 0) FROM ${srcSql})`;
         default: return unreachable(op);
       }
     }

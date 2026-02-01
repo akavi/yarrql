@@ -179,7 +179,7 @@ async function main() {
       .map(c => Students.filter(s =>
         Enrollments.any(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))
       ).count())
-    return classSizes.max()
+    return classSizes.max().desc()
   })
 
   const sql18 = toSql(sortedTeachers.__node)
@@ -197,7 +197,7 @@ async function main() {
       .map(c => ({
         count: Students.filter(s => Enrollments.any(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))).count(),
         name: c.name,
-      })).sort(c => c.count).first()
+      })).sort(c => c.count.desc()).first()
     return {
       id: t.id,
       name: t.name,

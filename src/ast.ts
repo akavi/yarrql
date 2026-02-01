@@ -111,23 +111,32 @@ type ScalarExpr<T extends Type> = never
  | { __type: 'scalar_window'; __op: ScalarWindowOperator; __source: Expr<ArrayTypeOf<T>> }
 
 type MathOperator = 'plus' | 'minus'
-type NumberWindowOperator = "max" | "min" | "average"
+type NumberWindowOperator = "max" | "min" | "average" | "sum"
 type NumberExpr =
   | { __type: 'number'; __number: number }
   | { __type: "math_op", __op: MathOperator, __left: Expr<NumberType>, __right: Expr<NumberType> }
- | { __type: 'number_window'; __op: NumberWindowOperator; __source: Expr<ArrayTypeOf<NumberType>> }
+  | { __type: 'number_window'; __op: NumberWindowOperator; __source: Expr<ArrayTypeOf<NumberType>> }
   | { __type: 'count'; __source: Expr<ArrayType> }
+  | { __type: 'desc'; __expr: Expr<NumberType> }
+  | { __type: 'length'; __expr: Expr<StringType> }
 
 type LogicalOperator = 'and' | 'or';
 type ComparisonOperator = 'gt' | 'lt' | 'gte' | 'lte';
+type StringComparisonOperator = 'like' | 'contains' | 'starts_with' | 'ends_with';
 type BooleanExpr =
  | { __type: 'boolean'; __boolean: boolean }
  | { __type: 'not'; __expr: Expr<BoolType> }
  | { __type: "eq", __left: Expr<ScalarType>, __right: Expr<ScalarType> }
  | { __type: 'comparison_op'; __op: ComparisonOperator; __left: Expr<NumberType>; __right: Expr<NumberType> }
  | { __type: 'logical_op'; __op: LogicalOperator; __left: Expr<BoolType>, __right: Expr<BoolType> }
+ | { __type: 'string_comparison'; __op: StringComparisonOperator; __left: Expr<StringType>; __right: Expr<StringType> }
 
-type StringExpr =  { __type: "string", __string: string }
+type StringExpr =
+  | { __type: "string", __string: string }
+  | { __type: "concat", __left: Expr<StringType>, __right: Expr<StringType> }
+  | { __type: "lower", __expr: Expr<StringType> }
+  | { __type: "upper", __expr: Expr<StringType> }
+  | { __type: "string_desc", __expr: Expr<StringType> }
 type NullExpr = { __type: "null" }
 
 type ArrayExpr<T extends Type> =  never
@@ -253,6 +262,16 @@ class ArrayBuilder<T extends Type> {
     return new NumberBuilder({ __type: 'number_window', __op: "average", __source: this.__node as Expr<ArrayTypeOf<NumberType>>});
   }
 
+  sum(): NumberBuilder {
+    const type = getType(this.__node)
+    if (type.__kind !== "array") {
+      throw new Error("Cannot get sum of non-array")
+    } else if (type.__el.__kind !== "number") {
+      throw new Error("Cannot get sum of non-numeric-array")
+    }
+    return new NumberBuilder({ __type: 'number_window', __op: "sum", __source: this.__node as Expr<ArrayTypeOf<NumberType>>});
+  }
+
   max(): ExprBuilder<T> {
     const type = getType(this.__node)
     if (type.__kind !== "array") {
@@ -354,6 +373,10 @@ function getType<T extends Type>(expr: Expr<T>): T {
     return {__kind: "number" } as T
   } else if (t === "count") {
     return { __kind: "number" } as T
+  } else if (t === "desc") {
+    return { __kind: "number" } as T
+  } else if (t === "length") {
+    return { __kind: "number" } as T
   } else if (t === "boolean") {
     return { __kind: "bool" } as T;
   } else if (t === "not") {
@@ -364,6 +387,16 @@ function getType<T extends Type>(expr: Expr<T>): T {
     return { __kind: "bool" } as T;
   } else if (t === "logical_op") {
     return { __kind: "bool" } as T;
+  } else if (t === "string_comparison") {
+    return { __kind: "bool" } as T;
+  } else if (t === "concat") {
+    return { __kind: "string" } as T;
+  } else if (t === "lower") {
+    return { __kind: "string" } as T;
+  } else if (t === "upper") {
+    return { __kind: "string" } as T;
+  } else if (t === "string_desc") {
+    return { __kind: "string" } as T;
   } else if (t === "array") {
     // TODO: support unknown arrays;
     return getLiteralType((expr as any).__array) as T;
@@ -555,14 +588,28 @@ class NumberBuilder {
     return new BooleanBuilder({__type: "eq", __left: this.__node, __right} as Expr<BoolType>)
   }
 
+  neq(value: ValueOf<NumberType> | null): BooleanBuilder {
+    return this.eq(value).not()
+  }
+
   gt(value: ValueOf<NumberType>): BooleanBuilder {
     const __right = toExpr<NumberType>(value)
     return new BooleanBuilder({__type: "comparison_op", __op: "gt", __left: this.__node, __right} as Expr<BoolType>)
   }
 
+  gte(value: ValueOf<NumberType>): BooleanBuilder {
+    const __right = toExpr<NumberType>(value)
+    return new BooleanBuilder({__type: "comparison_op", __op: "gte", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
   lt(value: ValueOf<NumberType>): BooleanBuilder {
     const __right = toExpr<NumberType>(value)
     return new BooleanBuilder({__type: "comparison_op", __op: "lt", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  lte(value: ValueOf<NumberType>): BooleanBuilder {
+    const __right = toExpr<NumberType>(value)
+    return new BooleanBuilder({__type: "comparison_op", __op: "lte", __left: this.__node, __right} as Expr<BoolType>)
   }
 
   minus(value: ValueOf<NumberType>): NumberBuilder {
@@ -574,6 +621,10 @@ class NumberBuilder {
     const __right = toExpr<NumberType>(value)
     return new NumberBuilder({__type: "math_op", __op: "plus", __left: this.__node, __right} as Expr<NumberType>)
   }
+
+  desc(): NumberBuilder {
+    return new NumberBuilder({__type: "desc", __expr: this.__node} as Expr<NumberType>)
+  }
 }
 
 class StringBuilder {
@@ -583,6 +634,51 @@ class StringBuilder {
     const __right = value === null ? { __type: 'null' } as Expr<NullType> : toExpr<StringType>(value);
     return new BooleanBuilder({__type: "eq", __left: this.__node, __right} as Expr<BoolType>)
   }
+
+  neq(value: ValueOf<StringType> | null): BooleanBuilder {
+    return this.eq(value).not()
+  }
+
+  like(pattern: ValueOf<StringType>): BooleanBuilder {
+    const __right = toExpr<StringType>(pattern);
+    return new BooleanBuilder({__type: "string_comparison", __op: "like", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  contains(value: ValueOf<StringType>): BooleanBuilder {
+    const __right = toExpr<StringType>(value);
+    return new BooleanBuilder({__type: "string_comparison", __op: "contains", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  startsWith(value: ValueOf<StringType>): BooleanBuilder {
+    const __right = toExpr<StringType>(value);
+    return new BooleanBuilder({__type: "string_comparison", __op: "starts_with", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  endsWith(value: ValueOf<StringType>): BooleanBuilder {
+    const __right = toExpr<StringType>(value);
+    return new BooleanBuilder({__type: "string_comparison", __op: "ends_with", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  concat(value: ValueOf<StringType>): StringBuilder {
+    const __right = toExpr<StringType>(value);
+    return new StringBuilder({__type: "concat", __left: this.__node, __right} as Expr<StringType>)
+  }
+
+  toLowerCase(): StringBuilder {
+    return new StringBuilder({__type: "lower", __expr: this.__node} as Expr<StringType>)
+  }
+
+  toUpperCase(): StringBuilder {
+    return new StringBuilder({__type: "upper", __expr: this.__node} as Expr<StringType>)
+  }
+
+  length(): NumberBuilder {
+    return new NumberBuilder({__type: "length", __expr: this.__node} as Expr<NumberType>)
+  }
+
+  desc(): StringBuilder {
+    return new StringBuilder({__type: "string_desc", __expr: this.__node} as Expr<StringType>)
+  }
 }
 
 class BooleanBuilder {
@@ -591,6 +687,10 @@ class BooleanBuilder {
   eq(value: ValueOf<BoolType> | null): BooleanBuilder {
     const __right = value === null ? { __type: 'null' } as Expr<NullType> : toExpr<BoolType>(value);
     return new BooleanBuilder({__type: "eq", __left: this.__node, __right} as Expr<BoolType>)
+  }
+
+  neq(value: ValueOf<BoolType> | null): BooleanBuilder {
+    return this.eq(value).not()
   }
 
   and(value: ValueOf<BoolType>): BooleanBuilder {
