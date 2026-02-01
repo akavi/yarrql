@@ -105,6 +105,7 @@ async function main() {
   }
   console.log()
 
+
   // Type inference test - this should compile without errors
   // The mapped result should have typed fields accessible in filter
   const _typeTest = Students.map(s => ({

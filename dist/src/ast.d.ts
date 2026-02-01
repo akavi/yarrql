@@ -260,7 +260,7 @@ declare class ArrayBuilder<T extends Type> {
         key: K;
         values: ArrayTypeOf<T>;
     }>>;
-    map<R extends Type>(fn: (val: ExprBuilder<T>) => ValueOf<R>): ArrayBuilder<R>;
+    map<R>(fn: (val: ExprBuilder<T>) => R): ArrayBuilder<InferType<R>>;
     limit(value: ValueOf<NumberType>): ArrayBuilder<T>;
     offset(value: ValueOf<NumberType>): ArrayBuilder<T>;
     union(other: ArrayBuilder<T> | Expr<ArrayTypeOf<T>>): ArrayBuilder<T>;
@@ -273,11 +273,20 @@ declare class ArrayBuilder<T extends Type> {
     any(fn: (val: ExprBuilder<T>) => ValueOf<BoolType>): BooleanBuilder;
     every(fn: (val: ExprBuilder<T>) => ValueOf<BoolType>): BooleanBuilder;
 }
-type ValueOf<T extends Type> = LiteralOf<T> | Expr<T> | ExprBuilder<T>;
+type BuilderValue = ArrayBuilder<any> | NumberBuilder | StringBuilder | BooleanBuilder | NullBuilder;
+type RecordObject = {
+    [key: string]: BuilderValue | RecordObject | Expr<any> | string | number | boolean | null;
+};
+type ValueOf<T extends Type> = LiteralOf<T> | Expr<T> | ExprBuilder<T> | RecordObject;
+type InferType<V> = V extends ArrayBuilder<infer E> ? ArrayTypeOf<E> : V extends NumberBuilder ? NumberType : V extends StringBuilder ? StringType : V extends BooleanBuilder ? BoolType : V extends NullBuilder ? NullType : V extends Expr<infer T> ? T : V extends string ? StringType : V extends number ? NumberType : V extends boolean ? BoolType : V extends null ? NullType : V extends {
+    [key: string]: any;
+} ? RecordTypeOf<{
+    [K in keyof V]: InferType<V[K]>;
+}> : Type;
 declare class NumberBuilder {
     node: Expr<NumberType>;
     constructor(node: Expr<NumberType>);
-    eq(value: ValueOf<NumberType>): BooleanBuilder;
+    eq(value: ValueOf<NumberType> | null): BooleanBuilder;
     gt(value: ValueOf<NumberType>): BooleanBuilder;
     lt(value: ValueOf<NumberType>): BooleanBuilder;
     minus(value: ValueOf<NumberType>): NumberBuilder;
@@ -286,12 +295,12 @@ declare class NumberBuilder {
 declare class StringBuilder {
     node: Expr<StringType>;
     constructor(node: Expr<StringType>);
-    eq(value: ValueOf<StringType>): BooleanBuilder;
+    eq(value: ValueOf<StringType> | null): BooleanBuilder;
 }
 declare class BooleanBuilder {
     node: Expr<BoolType>;
     constructor(node: Expr<BoolType>);
-    eq(value: ValueOf<BoolType>): BooleanBuilder;
+    eq(value: ValueOf<BoolType> | null): BooleanBuilder;
     and(value: ValueOf<BoolType>): BooleanBuilder;
     or(value: ValueOf<BoolType>): BooleanBuilder;
     not(): BooleanBuilder;

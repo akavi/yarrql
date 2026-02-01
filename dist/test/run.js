@@ -97,6 +97,15 @@ async function main() {
         console.log("Error:", err.message);
     }
     console.log();
+    "a" / 3;
+    // Type inference test - this should compile without errors
+    // The mapped result should have typed fields accessible in filter
+    const _typeTest = Students.map(s => ({
+        studentId: s.id,
+        studentName: s.name,
+        isAdult: s.age.gt(18)
+    })).filter(m => m.studentId.eq("test").and(m.isAdult));
+    void _typeTest; // suppress unused warning
     await client.end();
     console.log("Done!");
 }

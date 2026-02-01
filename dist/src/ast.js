@@ -432,7 +432,7 @@ class NumberBuilder {
         this.node = node;
     }
     eq(value) {
-        const right = toExpr(value);
+        const right = value === null ? { type: 'null' } : toExpr(value);
         return new BooleanBuilder({ type: "eq", left: this.node, right });
     }
     gt(value) {
@@ -457,7 +457,7 @@ class StringBuilder {
         this.node = node;
     }
     eq(value) {
-        const right = toExpr(value);
+        const right = value === null ? { type: 'null' } : toExpr(value);
         return new BooleanBuilder({ type: "eq", left: this.node, right });
     }
 }
@@ -466,7 +466,7 @@ class BooleanBuilder {
         this.node = node;
     }
     eq(value) {
-        const right = toExpr(value);
+        const right = value === null ? { type: 'null' } : toExpr(value);
         return new BooleanBuilder({ type: "eq", left: this.node, right });
     }
     and(value) {
