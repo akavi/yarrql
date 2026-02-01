@@ -61,7 +61,7 @@ Imagine we have the following tables:
  ```
  and generate the logically equivalent SQL
  ```
- console.log(teachersWithStudents.toSql())
+ console.log(toSql(teachersWithStudents))
  ```
 
  While that's not terribly complicated to express in SQL, the following are much more so (at least, if you're as bad at SQL as I am)
@@ -69,14 +69,13 @@ Imagine we have the following tables:
  ```
  const teachersWithMatureClasses = Teachers.map(t => ({
    id: t.id
-   matureClasses: Classes.filter(c => c.teacher_id.eq(t.id))
-     .map(c => ({
-       averageStudentAge: Students.filter(s => 
-         Enrollments.some(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))
-       ).map(s => s.age()).average()
-     }))
-     .filter(c => c.averageStudentAge.gt(20))
- }));
+   matureClasses: Classes.filter(c => {
+      const students = Students.filter(s => 
+        Enrollments.any(e => e.student_id.eq(s.id).and(e.class_id.eq(c.id)))
+      )
+      return c.teacher_id.eq(t.id).and(students.map(s => s.age).average().gt(25))
+   }),
+ }))
  ```
  
  ```
@@ -202,7 +201,6 @@ As the long list here suggests, this is pre-pre-pre-pre-alpha. Not fit for actua
 1. Add support for "simple" arrays (eg, if a table is typed `Array<{...fields}>`, constructs like `Array<Scalar>`
 2. Add support for nested objects (eg, if a table is typed `Array{...fields}>`, constructs like `{..fields}` and `{field: {...subFields}}`
 3. "pluck"-ing values (`.first`, `.nth`, `.last`)
-3. SQL-ese aliases (`where` => `filter`, `map` => `select`)
 4. Allow querying on tables without specifying their schema (at the cost of type safety)
 5. A Chrome plugin to generate SQL from YARRQL on the fly
 6. Support for more than just Postgres dialect SQL
