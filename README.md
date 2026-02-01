@@ -110,98 +110,230 @@ YARRQL is also _not_ a DSL for constructing SQL queries in javascript like Knex,
 
 LLMs can generate SQL, but it's hard to verify if that SQL is _correct_. I claim that it's much easier to see if a given YARRQL query does actually have the behavior you want.
 
-LLMs can _also_ generate YARRQL, with the following prompt:
+LLMs can _also_ generate YARRQL. Include the following in your prompt:
 
 <details>
-**YARRQL is a TypeScript-embedded query language for relational algebra, supporting nested (table-valued) columns and composable transformations. YARRQL queries are written using `.map`, `.filter`, `.any`, `.every`, and aggregate methods on table objects representing schema. Scalar columns map to values or expressions; table-valued columns map to subqueries (including nested `.filter`/`.map`). Filters use boolean-returning expressions (e.g., `s.age.gt(20)`), and aggregates like `.count()`, `.avg()` are called on subqueries. Logical connectives: `.and()`, `.or()`, `.not()`. Output is always a projection (`.map`), not direct selection of columns. Example:**
+<summary>LLM Prompt for YARRQL Generation</summary>
+
+### YARRQL Query Language
+
+YARRQL is a TypeScript query builder that treats tables as arrays you can `map` and `filter` over. It supports nested subqueries as column values.
+
+#### Defining Tables
 
 ```typescript
-const Teachers = Table({id: 'uuid', name: 'string'})
-const Students = Table({id: 'uuid', name: 'string', age: 'number'})
-const Enrollments = Table({student_id: 'uuid', class_id: 'uuid', grade: 'number'})
-const Classes = Table({id: 'uuid', name: 'string', teacher_id: 'uuid'})
+const Students = Table("student", { id: "uuid", name: "string", age: "number" })
+const Teachers = Table("teacher", { id: "uuid", name: "string" })
+const Classes = Table("class", { id: "uuid", name: "string", teacher_id: "uuid" })
+const Enrollments = Table("enrollment", { student_id: "uuid", class_id: "uuid", grade: "number" })
+```
 
-// Query for teachers with their students
-const teachersWithStudents = Teachers.map(t => ({
-  ...t,
-  students: Students.filter(s =>
-    Enrollments.any(e =>
-      Classes.any(c =>
-        c.teacher_id.eq(t.id).and(c.id.eq(e.class_id)).and(e.student_id.eq(s.id))
-      )
-    )
-  )
+#### Core Pattern
+
+All queries follow this pattern: start with a table, chain operations, access fields via callback parameters.
+
+```typescript
+// Filter: keep rows matching condition
+Students.filter(s => s.age.gt(20))
+
+// Map: transform each row (ALWAYS use map for output shape)
+Students.map(s => ({ name: s.name, age: s.age }))
+
+// Chain operations
+Students.filter(s => s.age.gt(20)).map(s => ({ name: s.name }))
+```
+
+#### Field Access & Comparisons
+
+Fields are accessed via the callback parameter. Comparisons return boolean builders:
+
+```typescript
+s.age.gt(20)           // age > 20
+s.age.gte(20)          // age >= 20
+s.age.lt(20)           // age < 20
+s.age.lte(20)          // age <= 20
+s.age.eq(20)           // age = 20
+s.age.neq(20)          // age != 20
+s.name.eq("Alice")     // name = 'Alice'
+s.grade.eq(null)       // grade IS NULL
+```
+
+#### Boolean Logic
+
+Chain with `.and()`, `.or()`, negate with `.not()`:
+
+```typescript
+s.age.gt(20).and(s.age.lt(30))
+s.name.eq("Alice").or(s.name.eq("Bob"))
+s.active.not()
+```
+
+#### String Operations
+
+```typescript
+s.name.contains("ali")      // LIKE '%ali%'
+s.name.startsWith("A")      // LIKE 'A%'
+s.name.endsWith("ce")       // LIKE '%ce'
+s.name.like("A%e")          // LIKE 'A%e'
+s.name.toLowerCase()        // LOWER(name)
+s.name.toUpperCase()        // UPPER(name)
+s.name.concat(" Jr.")       // name || ' Jr.'
+s.name.length()             // LENGTH(name) -> number
+```
+
+#### Arithmetic
+
+```typescript
+s.age.plus(1)
+s.age.minus(5)
+s.score.plus(s.bonus)
+```
+
+#### Aggregations (on arrays)
+
+```typescript
+Students.count()                        // count all
+Students.filter(s => s.age.gt(20)).count()  // count filtered
+Students.map(s => s.age).average()      // AVG(age)
+Students.map(s => s.age).sum()          // SUM(age)
+Students.map(s => s.age).max()          // MAX(age)
+Students.map(s => s.age).min()          // MIN(age)
+```
+
+#### Existence Checks
+
+```typescript
+// any: true if at least one row matches
+Enrollments.any(e => e.student_id.eq(s.id))
+
+// every: true if all rows match
+Enrollments.every(e => e.grade.gte(60))
+```
+
+#### Sorting
+
+```typescript
+Students.sort(s => s.age)              // ascending
+Students.sort(s => s.age.desc())       // descending
+Students.sort(s => s.name.desc())      // strings too
+```
+
+#### Pagination
+
+```typescript
+Students.sort(s => s.age).limit(10)
+Students.sort(s => s.age).offset(20).limit(10)
+```
+
+#### First Element
+
+```typescript
+// .first() returns a single row, not an array
+const oldest = Students.sort(s => s.age.desc()).first()
+// Access fields directly on result
+oldest.name
+oldest.age
+```
+
+#### Nested Subqueries (Key Feature!)
+
+Embed related data as nested arrays:
+
+```typescript
+// Teachers with their classes
+Teachers.map(t => ({
+  id: t.id,
+  name: t.name,
+  classes: Classes.filter(c => c.teacher_id.eq(t.id))
 }))
 
-// Query for students with pending classes
-const studentsWithPendingClasses = Students.map(s => ({
+// Teachers with classes AND students in each class
+Teachers.map(t => ({
+  id: t.id,
+  name: t.name,
+  classes: Classes.filter(c => c.teacher_id.eq(t.id)).map(c => ({
+    id: c.id,
+    name: c.name,
+    students: Students.filter(s =>
+      Enrollments.any(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))
+    )
+  }))
+}))
+```
+
+#### Filtering by Nested Properties
+
+```typescript
+// Teachers who have at least one class
+Teachers.map(t => ({
+  id: t.id,
+  classes: Classes.filter(c => c.teacher_id.eq(t.id))
+})).filter(t => t.classes.count().gt(0))
+
+// Classes with average student age > 21
+Classes.map(c => ({
+  id: c.id,
+  name: c.name,
+  avgAge: Students.filter(s =>
+    Enrollments.any(e => e.class_id.eq(c.id).and(e.student_id.eq(s.id)))
+  ).map(s => s.age).average()
+})).filter(c => c.avgAge.gt(21))
+```
+
+#### Complete Examples
+
+```typescript
+// Students with pending grades (grade IS NULL)
+Students.map(s => ({
   id: s.id,
+  name: s.name,
   pendingClasses: Classes.filter(c =>
     Enrollments.any(e =>
-      e.student_id.eq(s.id).and(e.class_id.eq(c.id)).and(e.grade.eq(undefined))
+      e.student_id.eq(s.id).and(e.class_id.eq(c.id)).and(e.grade.eq(null))
     )
   )
 })).filter(s => s.pendingClasses.count().gt(0))
-```
-API:
-```typescript
-class QueryBuilder<T extends Schema> {
-  constructor(public node: Query<T>) {}
-  toAST(): Query<T>
 
-  filter(fn: (cols: ColumnAccessors<T>) => Expr): QueryBuilder<T>
-  map<F extends Schema>(
-    fn: (cols: ColumnAccessors<T>) => ColumnAccessors<F>
-  ): QueryBuilder<F>
-  orderBy(fn: (cols: ColumnAccessors<T>) => OrderSpec[]): QueryBuilder<T>
-  groupBy(
-    fn: (cols: ColumnAccessors<T>) => Expr
-  ): QueryBuilder<{ key: ScalarType; values: T }>
+// Top 5 students by total grade points
+Students.map(s => ({
+  id: s.id,
+  name: s.name,
+  totalPoints: Enrollments.filter(e => e.student_id.eq(s.id)).map(e => e.grade).sum()
+})).sort(s => s.totalPoints.desc()).limit(5)
 
-  limit(n: number): QueryBuilder<T>
-  offset(n: number): QueryBuilder<T>
-
-  union(other: QueryBuilder<T>): QueryBuilder<T>
-  intersect(other: QueryBuilder<T>): QueryBuilder<T>
-  difference(other: QueryBuilder<T>): QueryBuilder<T>
-
-  count(): ExprBuilder
-  average(): ExprBuilder
-  max(): ExprBuilder
-  min(): ExprBuilder
-  any(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder
-  every(fn: (cols: ColumnAccessors<T>) => Expr): ExprBuilder
-}
-
-class ExprBuilder {
-  constructor(public node: Expr) {}
-
-  eq(value: Expr | Scalar): ExprBuilder
-  gt(value: Expr | number): ExprBuilder
-  lt(value: Expr | number): ExprBuilder
-  minus(value: Expr | number): ExprBuilder
-  plus(value: Expr | number): ExprBuilder
-  and(expr: Expr): ExprBuilder
-  or(expr: Expr): ExprBuilder
-  not(): ExprBuilder
-  asc(): OrderSpecBuilder
-  desc(): OrderSpecBuilder
-}
+// Teachers ranked by their largest class size
+Teachers.map(t => ({
+  id: t.id,
+  name: t.name,
+  largestClassSize: Classes
+    .filter(c => c.teacher_id.eq(t.id))
+    .map(c => Enrollments.filter(e => e.class_id.eq(c.id)).count())
+    .max()
+})).sort(t => t.largestClassSize.desc())
 ```
 
-**Generate queries in this style. Table-valued columns use nested subqueries via `.filter`/`.map`. Scalar columns are projected as values or aggregate expressions. Output is a `.map` projection (not SQL).**
+#### Key Rules
+
+1. **Always use `.map()` to define output shape** - don't just return raw tables
+2. **Field access requires the callback parameter** - write `s.age`, not `age`
+3. **Comparisons are method calls** - write `s.age.gt(20)`, not `s.age > 20`
+4. **Null checks use `.eq(null)`** - not `=== null` or `.isNull()`
+5. **Nested queries go inside `.map()` callbacks** - they can reference outer scope
+6. **Use `.any()` for "exists" checks** - `OtherTable.any(x => condition)`
+7. **Chain `.filter()` before `.map()`** when you want to filter then transform
 
 </details>
 
 
 ## ToDo
 
-As the long list here suggests, this is pre-pre-pre-pre-alpha. Not fit for actual production use anywhere
+As the long list here suggests, this is pre-pre-alpha. Not fit for actual production use anywhere
 
-1. Add support for "simple" arrays (eg, if a table is typed `Array<{...fields}>`, constructs like `Array<Scalar>`
-2. Add support for nested objects (eg, if a table is typed `Array{...fields}>`, constructs like `{..fields}` and `{field: {...subFields}}`
-3. "pluck"-ing values (`.first`, `.nth`, `.last`)
-4. Allow querying on tables without specifying their schema (at the cost of type safety)
-5. A Chrome plugin to generate SQL from YARRQL on the fly
-6. Support for more than just Postgres dialect SQL
-7. (one day?) A native language format, rather than hosted in TS/JS
+1. Allow querying on tables without specifying their schema (at the cost of type safety)
+2. A Chrome plugin to generate SQL from YARRQL on the fly
+3. Support for more than just Postgres dialect SQL
+4. (one day?) A native language format, rather than hosted in TS/JS
+
+## Name
+
+Honestly I thought of the logo first, and then backronymed the name to fit it.

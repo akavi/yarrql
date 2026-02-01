@@ -1,10 +1,11 @@
 {
-  "name": "quorylang",
+  "name": "yarrql",
   "version": "1.0.0",
-  "description": "lol",
+  "description": "YARRQL - Yet Another Recursive Relational Query Language",
+  "author": "Arjun Kavi"
   "main": "index.js",
   "license": "MIT",
-  "private": true,
+  "private": false,
   "dependencies": {
     "@types/lodash": "^4.17.16",
     "@types/pg": "^8.16.0",
