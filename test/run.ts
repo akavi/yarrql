@@ -86,15 +86,34 @@ async function main() {
 
   // Test 6: Teachers with mature classes (complex nested query from README)
   console.log("=== Test 6: Teachers with mature classes ===")
+  console.log("Average ages per class:")
+  const classAges = Classes.map(c => {
+    const students = Students.filter(s =>
+      Enrollments.any(e => e.student_id.eq(s.id).and(e.class_id.eq(c.id)))
+    )
+    return {
+      id: c.id,
+      name: c.name,
+      averageAge: students.map(s => s.age).average(),
+    }
+  })
+  const sql6a = toSql(classAges.node)
+  console.log("SQL:", sql6a)
+  try {
+    const res6a = await client.query(`SELECT * FROM ${sql6a}`)
+    console.log("Results:", JSON.stringify(res6a.rows, null, 2))
+  } catch (err: any) {
+    console.log("Error:", err.message)
+  }
   const teachersWithMatureClasses = Teachers.map(t => ({
     id: t.id,
     matureClasses: Classes.filter(c => {
       const students = Students.filter(s =>
         Enrollments.any(e => e.student_id.eq(s.id).and(e.class_id.eq(c.id)))
       )
-      return c.teacher_id.eq(t.id).and(students.map(s => s.age).average().gt(20))
+      return c.teacher_id.eq(t.id).and(students.map(s => s.age).average().gt(21))
     }),
-  }))
+  })).filter(t => t.matureClasses.count().gt(0))
   const sql6 = toSql(teachersWithMatureClasses.node)
   console.log("SQL:", sql6)
   try {

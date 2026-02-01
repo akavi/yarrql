@@ -236,6 +236,11 @@ function emitExpr(e: Expr<any>, tableAlias: string, ctx: SqlGenCtx): string {
     case "not":
       return `(NOT ${emitExpr(e.expr, tableAlias, ctx)})`;
     case "count": {
+      // If source is a field (JSON array from subquery), use json_array_length
+      if (e.source.type === "field" || e.source.type === "row") {
+        const fieldSql = emitExpr(e.source as Expr<any>, tableAlias, ctx);
+        return `COALESCE(json_array_length(${fieldSql}), 0)`;
+      }
       const { sql: srcSql } = emitQuery(e.source as Query<Schema>, ctx);
       return `(SELECT COUNT(*) FROM ${srcSql})`;
     }
